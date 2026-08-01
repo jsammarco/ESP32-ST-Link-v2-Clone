@@ -43,7 +43,9 @@ constexpr uint32_t HALF_CYCLE_US = 10;
 // the USB-C breakout; it is still orders of magnitude faster than remote
 // bitbang through a CP210x.
 constexpr uint32_t FAST_HALF_CYCLE_US = 2;
-constexpr size_t FAST_IMAGE_MAX_BYTES = 60 * 1024;
+constexpr size_t FAST_APP_MAX_BYTES = 60 * 1024;
+constexpr size_t FAST_IMAGE_MAX_BYTES = 64 * 1024;
+constexpr size_t TARGET_RAM_BYTES = 8 * 1024;
 constexpr uint32_t FLASH_BASE = 0x08000000;
 constexpr uint32_t FLASH_PAGE_SIZE = 512;
 constexpr uint32_t IWDG_KR = 0x40003000;
@@ -350,6 +352,26 @@ bool fast_halt_target() {
   return fast_mem_write32(DHCSR, 0xA05F0003U);
 }
 
+bool fast_resume_target() {
+  return fast_mem_write32_sync(DHCSR, 0xA05F0001U);
+}
+
+bool fast_reset_target() {
+  (void)fast_mem_write32_sync(IWDG_KR, 0x0000AAAAU);
+  if (!fast_resume_target()) {
+    return false;
+  }
+  delay(2);
+  // Do not use the synchronizing RDBUFF read for AIRCR. SYSRESETREQ resets
+  // the debug port before that trailing read can be acknowledged, which
+  // previously made a successful reset look like an error to the host.
+  if (!fast_mem_write32(AIRCR, 0x05FA0004U)) {
+    return false;
+  }
+  delay(10);
+  return true;
+}
+
 bool fast_unlock_and_erase(size_t image_size) {
   if (!fast_mem_write32(IWDG_KR, 0x0000AAAAU) ||
       !fast_mem_write32(IWDG_KR, 0x00005555U) ||
@@ -436,6 +458,7 @@ bool fast_program_and_verify(const uint8_t *image, size_t image_size) {
       yield();
     }
   }
+  Serial.printf("VERIFY_OK %u bytes\n", static_cast<unsigned>(image_size));
   return true;
 }
 
@@ -476,7 +499,7 @@ void fast_flash_command() {
       (static_cast<size_t>(header[1]) << 8) |
       (static_cast<size_t>(header[2]) << 16) |
       (static_cast<size_t>(header[3]) << 24);
-  if (image_size == 0 || image_size > FAST_IMAGE_MAX_BYTES || image_size % 4 != 0) {
+  if (image_size == 0 || image_size > FAST_APP_MAX_BYTES || image_size % 4 != 0) {
     Serial.println("ERR SIZE");
     return;
   }
@@ -496,14 +519,114 @@ void fast_flash_command() {
     Serial.println("ERR FLASH");
     return;
   }
-  (void)fast_mem_write32_sync(IWDG_KR, 0x0000AAAAU);
-  // C_HALT remains set after the programming session. Clear it before the
-  // system reset; otherwise the new vector table is correct but the core
-  // remains halted at reset and the display never starts.
-  (void)fast_mem_write32_sync(DHCSR, 0xA05F0001U);
+  if (!fast_reset_target()) {
+    Serial.println("ERR RESET");
+    return;
+  }
+  Serial.println("DONE");
+}
+
+bool fast_dump_region(uint32_t address, size_t size) {
+  uint8_t buffer[256];
+  size_t buffered = 0;
+  for (size_t offset = 0; offset < size; offset += 4) {
+    if ((offset & 0x3FFU) == 0) {
+      // A halted target can still have its independent watchdog running.
+      if (!fast_mem_write32_sync(IWDG_KR, 0x0000AAAAU)) {
+        return false;
+      }
+    }
+    uint32_t value = 0;
+    if (!fast_mem_read32(address + offset, &value)) {
+      return false;
+    }
+    buffer[buffered++] = static_cast<uint8_t>(value);
+    buffer[buffered++] = static_cast<uint8_t>(value >> 8);
+    buffer[buffered++] = static_cast<uint8_t>(value >> 16);
+    buffer[buffered++] = static_cast<uint8_t>(value >> 24);
+    if (buffered == sizeof(buffer)) {
+      Serial.write(buffer, buffered);
+      Serial.flush();
+      buffered = 0;
+      yield();
+    }
+  }
+  if (buffered != 0) {
+    Serial.write(buffer, buffered);
+    Serial.flush();
+  }
+  return true;
+}
+
+void fast_backup_command() {
+  uint32_t dpidr = 0;
+  if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
+    Serial.println("ERR CONNECT");
+    return;
+  }
   delay(2);
-  (void)fast_mem_write32_sync(AIRCR, 0x05FA0004U);
-  delay(5);
+  Serial.printf("BACKUP %u %u %08lX\n",
+                static_cast<unsigned>(FAST_IMAGE_MAX_BYTES),
+                static_cast<unsigned>(TARGET_RAM_BYTES),
+                static_cast<unsigned long>(dpidr));
+
+  // Do not start the binary stream until the host is ready to receive it.
+  uint8_t confirm = 0;
+  if (!read_serial_exact(&confirm, 1, 10000) || confirm != 'C') {
+    (void)fast_resume_target();
+    Serial.println("ERR BACKUP_CANCELLED");
+    return;
+  }
+
+  const bool dumped = fast_dump_region(FLASH_BASE, FAST_IMAGE_MAX_BYTES) &&
+      fast_dump_region(0x20000000U, TARGET_RAM_BYTES);
+  const bool resumed = fast_resume_target();
+  if (!dumped) {
+    Serial.println("ERR DUMP");
+  } else if (!resumed) {
+    Serial.println("ERR RESUME");
+  } else {
+    Serial.println("DONE");
+  }
+}
+
+void fast_restore_command() {
+  uint8_t header[4];
+  if (!read_serial_exact(header, sizeof(header), 3000)) {
+    Serial.println("ERR HEADER");
+    return;
+  }
+  const size_t image_size = static_cast<size_t>(header[0]) |
+      (static_cast<size_t>(header[1]) << 8) |
+      (static_cast<size_t>(header[2]) << 16) |
+      (static_cast<size_t>(header[3]) << 24);
+  // Restore is intentionally limited to exact full-flash backup images so a
+  // user cannot accidentally overwrite the persistent NV region with a
+  // partial application image.
+  if (image_size != FAST_IMAGE_MAX_BYTES) {
+    Serial.println("ERR RESTORE_SIZE");
+    return;
+  }
+  Serial.println("RESTORE_READY");
+  if (!read_serial_exact(fast_image, image_size, 45000)) {
+    Serial.println("ERR IMAGE");
+    return;
+  }
+
+  uint32_t dpidr = 0;
+  if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
+    Serial.println("ERR CONNECT");
+    return;
+  }
+  Serial.printf("IDR %08lX\n", static_cast<unsigned long>(dpidr));
+  if (!fast_unlock_and_erase(image_size) || !fast_program_and_verify(fast_image, image_size)) {
+    Serial.println("ERR RESTORE");
+    return;
+  }
+  if (!fast_reset_target()) {
+    Serial.println("ERR RESET");
+    return;
+  }
   Serial.println("DONE");
 }
 
@@ -514,6 +637,14 @@ void handle_command(uint8_t command) {
   }
   if (command == 'F') {
     fast_flash_command();
+    return;
+  }
+  if (command == 'K') {
+    fast_backup_command();
+    return;
+  }
+  if (command == 'X') {
+    fast_restore_command();
     return;
   }
 

@@ -121,6 +121,45 @@ Only `DONE` means the image verified and the ESP32 requested a target reset.
 Do not disconnect the wiring or interrupt the tool once erasing begins. An
 interrupted operation can leave the target without valid application firmware.
 
+## Back up and restore internal flash
+
+Back up a working device **before** experimenting with firmware. The backup
+tool halts the MCU briefly, reads all 64 KB of internal flash plus an 8 KB RAM
+snapshot, saves SHA-256 hashes in `manifest.json`, and then resumes the target.
+The default destination is a timestamped directory under `backups/`, which is
+ignored by Git because it can contain device-specific data.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\backup_raz.ps1 -Port COM7
+```
+
+A completed backup contains:
+
+| File | Contents | Restore behavior |
+|---|---|---|
+| `internal_flash.bin` | Entire 64 KB N32G031 internal flash, including the final 4 KB persistent NV region | Restored and verified |
+| `ram_snapshot.bin` | 8 KB live RAM capture at the moment the CPU was halted | Archive/diagnostic only; not restored |
+| `manifest.json` | Timestamp, DPIDR, sizes, and SHA-256 hashes | Validated before restore |
+
+The full internal-flash image preserves data stored in its persistent NV area,
+including the Launcher’s puff-count/settings state. RAM cannot be preserved
+across a reset or power loss, so its snapshot is deliberately not written back.
+Data held in an external flash chip or other peripherals is also outside this
+backup’s scope.
+
+Restore only a backup you trust. This erases all 64 KB of internal flash,
+including the current application and persistent settings:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\restore_raz.ps1 `
+  -Port COM7 `
+  -Backup ".\backups\raz-YYYYMMDD-HHMMSS" `
+  -Confirm
+```
+
+The restore tool validates `manifest.json` when present, programs the complete
+flash image, verifies it, and requests a target reset only after success.
+
 ## Launcher controls
 
 The bundled Launcher combines Slideshow and Flappy in one image:

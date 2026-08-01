@@ -1,2 +1,5 @@
 .pio/
 tools/openocd-windows/
+backups/
+__pycache__/
+*.py[cod]
