@@ -1,0 +1,6 @@
+/build/
+/generated/photos.h
+/generated/vape_level_seed.h
+/direct_flash.tcl
+/factory_vape_level.json
+__pycache__/
