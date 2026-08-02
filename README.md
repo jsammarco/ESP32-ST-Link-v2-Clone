@@ -20,6 +20,8 @@ physical ST-Link is required.
 - ESP32 DevKit V1 firmware: local SWD probe, erase, program, verification, and
   target reset for the N32G031.
 - `tools/fast_flash.py`: the recommended Windows serial flasher.
+- `tools/raz_manager_gui.py`: a local desktop GUI for connection testing,
+  saved-value reads, backup, restore, and bundled-app flashing.
 - An optional OpenOCD `remote_bitbang` bridge for diagnostics and read-only
   troubleshooting.
 - Prebuilt RAZ application images in [`RAZ Vape Apps`](<RAZ Vape Apps>):
@@ -63,6 +65,76 @@ is not required.
 
 If the probe cannot read the target, verify the common ground, wake the vape,
 and swap only the CC1/CC2 wires. Keep the wires short.
+
+## Desktop GUI
+
+After uploading the current ESP32 firmware, launch the local GUI from the
+repository root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\start_raz_manager.ps1
+```
+
+Select the ESP32's COM port in the window. The GUI excludes `COM1` from its
+port list because that is normally the legacy motherboard serial port. It can
+test the SWD connection, create a named (or timestamped) backup, restore a
+selected backup, flash Launcher/Slideshow/Flappy or a custom `.bin`, and display the persisted
+internal-flash values. It runs the same `fast_flash.py` protocol as the
+command-line workflow and its log shows the exact ESP32 progress messages.
+
+When **Slideshow** or **Launcher** is selected, use **Choose up to 3 photos...**
+to select one to three `.bmp`, `.gif`, `.jpeg`, `.jpg`, `.png`, or `.webp`
+files. On Flash, the manager first builds a new image containing those photos,
+then performs the optional backup and flashes that freshly built image. For
+Launcher, the selected images replace only its built-in Slideshow and create
+`launcher-photos.bin`; the normal `launcher.bin` remains unchanged. Likewise,
+a standalone Slideshow selection creates `slideshow-photos.bin` without
+replacing `slideshow.bin`. Clearing the selection returns to the bundled app
+image. The originals are only copied into a temporary build folder, and the
+generated source image header is restored afterward. Images are centre-cropped
+and resized for the 128×160 display, then quantized to 16 colours. This
+requires Pillow (`py -m pip install pillow`) and a Vaporware SDK checkout; the normal sibling path
+`C:\Users\Joe\Projects\Vaporware\src` is detected automatically, or set
+`VAPORWARE_SDK` to the SDK root (or its `src` folder).
+
+Use **Update ESP32 firmware...** whenever this repository's `src/main.cpp`
+changes. The GUI locates PlatformIO (including the standard
+`~\.platformio\penv\Scripts\platformio.exe` installation), uploads to the
+selected ESP32 port, and does not communicate with or alter the vape during
+that operation.
+
+### Launcher pre-flash options
+
+When **Launcher** is selected, the GUI also presents settings that are applied
+after the image verifies. **Create a backup before flashing** is enabled by
+default. The Launcher-only options are deliberately bounded:
+
+| Option | Default | Effect |
+|---|---|---|
+| Remaining-use display | Preserve saved value | `100%` sets the Launcher's internal use tracker to zero. It changes only the displayed tracker; it does not recharge the battery or consumable. |
+| Coil profile | Current app default | Preserves the existing Normal (50% duty, 1.8 s cutoff) and Boost (continuous, 0.9 s cutoff) behavior. |
+| Conservative coil profile | Not selected | Uses lower duty cycles and shorter cutoffs: Normal 33% / 1.5 s and Boost 50% / 0.7 s. |
+| Coil disabled | Not selected | Keeps the Launcher UI usable but prevents coil drive. |
+
+No GUI option increases the existing output duty cycle or cutoff time. The
+profile setting only applies to the updated bundled Launcher image; it is
+disabled for Slideshow, Flappy, and custom binaries.
+
+**Get saved vape values** is read-only. It briefly halts the target to inspect
+the final 4 KB internal-flash key/value area, then resumes it. Values have the
+following app-specific meaning:
+
+| Displayed value | Internal key | Meaning |
+|---|---:|---|
+| Puff count | 0 | Available only from apps that save a discrete puff count. |
+| Total vape time | 1 | Available only from apps that use this timer. |
+| Launcher heater use | 5 | The Launcher's powered-heater time in 0.01-second ticks, plus its derived six-bar remaining gauge. |
+| Launcher factory import | 6 | Marker used by the Launcher when importing a factory level seed. |
+| Game values | 2-4 | Flappy high score and slot-machine values when those apps saved them. |
+
+The bundled Launcher does **not** track individual puffs; it records
+powered-heater time in key 5. Therefore its puff-count entry normally shows
+`not stored`, which is expected rather than an error.
 
 ## Quick start: flash a bundled app
 
@@ -142,7 +214,8 @@ A completed backup contains:
 | `manifest.json` | Timestamp, DPIDR, sizes, and SHA-256 hashes | Validated before restore |
 
 The full internal-flash image preserves data stored in its persistent NV area,
-including the Launcher’s puff-count/settings state. RAM cannot be preserved
+including the Launcher’s heater-use/settings state and any app-provided puff
+count. RAM cannot be preserved
 across a reset or power loss, so its snapshot is deliberately not written back.
 Data held in an external flash chip or other peripherals is also outside this
 backup’s scope.

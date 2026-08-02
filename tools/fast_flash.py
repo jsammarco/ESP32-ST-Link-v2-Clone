@@ -28,6 +28,26 @@ BAUD = 230400
 MAX_APP_IMAGE_BYTES = 60 * 1024
 FULL_FLASH_BYTES = 64 * 1024
 TARGET_RAM_BYTES = 8 * 1024
+NV_KEY_LAUNCHER_LEVEL = 5
+NV_KEY_LAUNCHER_PROFILE = 7
+LAUNCHER_EMPTY_TICKS = 340_000
+COIL_PROFILE_MAGIC = 0x43504F00
+COIL_PROFILES = {
+    "default": 0,
+    "conservative": 1,
+    "disabled": 2,
+}
+NV_VALUE_LABELS = {
+    0: "Puff count",
+    1: "Total vape time (0.01 s ticks)",
+    2: "Flappy high score",
+    3: "Slot spins",
+    4: "Slot wins",
+    5: "Launcher heater-use ticks (0.01 s)",
+    6: "Launcher factory-import marker",
+    7: "App 2 value",
+}
+VAPE_EMPTY_TICKS = 340_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +56,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baud", type=int, default=BAUD)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--probe", action="store_true", help="Read the target DPIDR only; writes nothing")
+    mode.add_argument(
+        "--values",
+        action="store_true",
+        help="Read saved internal-flash values only; the target pauses briefly and then resumes",
+    )
+    mode.add_argument(
+        "--set-launcher-level",
+        type=int,
+        metavar="PERCENT",
+        help="Set the Launcher's remaining-use display (0-100); this does not change battery or consumable capacity",
+    )
+    mode.add_argument(
+        "--set-coil-profile",
+        choices=COIL_PROFILES,
+        help="Set a bounded Launcher coil profile: default, conservative, or disabled",
+    )
     mode.add_argument("--flash", type=Path, metavar="IMAGE", help="Program and verify this .bin image")
     mode.add_argument("--backup", type=Path, metavar="DIRECTORY", help="Save full internal flash and a RAM snapshot")
     mode.add_argument("--restore", type=Path, metavar="BACKUP", help="Restore a full internal-flash backup")
@@ -95,6 +131,100 @@ def probe(device: serial.Serial) -> int:
     if not response.startswith("IDR "):
         raise RuntimeError(f"ESP32 SWD probe failed: {response}")
     return 0
+
+
+def print_saved_values(values: dict[int, int | None]) -> None:
+    print("Saved internal-flash values:")
+    for key in range(8):
+        label = NV_VALUE_LABELS[key]
+        value = values.get(key)
+        if value is None:
+            print(f"  {label}: not stored")
+            continue
+        if key == 5:
+            remaining = max(0, ((VAPE_EMPTY_TICKS - min(value, VAPE_EMPTY_TICKS)) * 100) // VAPE_EMPTY_TICKS)
+            bars = 0 if value >= VAPE_EMPTY_TICKS else 6 - (value // 60_000)
+            print(f"  {label}: {value:,} ({value / 100:.2f} seconds used; {remaining}% / {bars} bars remaining)")
+        elif key == 1:
+            print(f"  {label}: {value:,} ({value / 100:.2f} seconds)")
+        else:
+            print(f"  {label}: {value:,}")
+
+
+def values(device: serial.Serial) -> int:
+    print("Reading saved values; the target will pause briefly and then resume...")
+    device.write(b"V")
+    device.flush()
+    header = read_line(device, time.monotonic() + 15)
+    fields = header.split()
+    if len(fields) != 2 or fields[0] != "VALUES":
+        raise RuntimeError(f"ESP32 did not start the values read: {header}")
+    try:
+        dpidr = int(fields[1], 16)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid ESP32 values header: {header}") from exc
+    print(f"IDR {dpidr:08X}")
+
+    saved_values: dict[int, int | None] = {}
+    deadline = time.monotonic() + 45
+    while True:
+        response = read_line(device, deadline)
+        if response == "DONE":
+            break
+        if response.startswith("ERR"):
+            raise RuntimeError(f"ESP32 could not read saved values: {response}")
+        print(response)
+        fields = response.split()
+        if len(fields) != 3 or fields[0] != "NV":
+            raise RuntimeError(f"Unexpected ESP32 values response: {response}")
+        try:
+            key = int(fields[1])
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid NV key from ESP32: {response}") from exc
+        if key not in NV_VALUE_LABELS:
+            raise RuntimeError(f"Unexpected NV key from ESP32: {response}")
+        if fields[2] == "NONE":
+            saved_values[key] = None
+        else:
+            try:
+                saved_values[key] = int(fields[2], 16)
+            except ValueError as exc:
+                raise RuntimeError(f"Invalid NV value from ESP32: {response}") from exc
+    print_saved_values(saved_values)
+    return 0
+
+
+def set_launcher_config(device: serial.Serial, key: int, value: int, description: str) -> int:
+    print(f"Setting {description}...")
+    device.write(b"N" + struct.pack("<BI", key, value))
+    device.flush()
+
+    deadline = time.monotonic() + 45
+    while True:
+        response = read_line(device, deadline)
+        print(response)
+        if response == "DONE":
+            return 0
+        if response.startswith("ERR") or response.startswith("VERIFY_FAIL"):
+            raise RuntimeError(f"ESP32 could not set {description}: {response}")
+
+
+def set_launcher_level(device: serial.Serial, percent: int) -> int:
+    if not 0 <= percent <= 100:
+        raise RuntimeError("Launcher level must be from 0 to 100 percent.")
+    used_ticks = ((100 - percent) * LAUNCHER_EMPTY_TICKS) // 100
+    return set_launcher_config(
+        device,
+        NV_KEY_LAUNCHER_LEVEL,
+        used_ticks,
+        f"Launcher remaining-use display to {percent}% ({used_ticks:,} used ticks)",
+    )
+
+
+def set_coil_profile(device: serial.Serial, profile_name: str) -> int:
+    profile = COIL_PROFILES[profile_name]
+    value = COIL_PROFILE_MAGIC | profile
+    return set_launcher_config(device, NV_KEY_LAUNCHER_PROFILE, value, f"Launcher coil profile to {profile_name}")
 
 
 def flash(device: serial.Serial, image_path: Path) -> int:
@@ -237,6 +367,12 @@ def main() -> int:
     with open_esp32(args.port, args.baud) as device:
         if args.probe:
             return probe(device)
+        if args.values:
+            return values(device)
+        if args.set_launcher_level is not None:
+            return set_launcher_level(device, args.set_launcher_level)
+        if args.set_coil_profile:
+            return set_coil_profile(device, args.set_coil_profile)
         if args.flash:
             return flash(device, args.flash)
         if args.backup:

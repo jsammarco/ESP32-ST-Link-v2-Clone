@@ -1,0 +1,481 @@
+Archive member included to satisfy reference by file (symbol)
+
+C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+                              build\doom.o (__aeabi_uidiv)
+C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+                              build\doom.o (__aeabi_idiv)
+C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_dvmd_tls.o)
+                              C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o) (__aeabi_idiv0)
+
+Discarded input sections
+
+ .text          0x00000000        0x0 build\startup.o
+ .data          0x00000000        0x0 build\startup.o
+ .bss           0x00000000        0x0 build\startup.o
+ .text          0x00000000        0x0 build\system.o
+ .data          0x00000000        0x0 build\system.o
+ .bss           0x00000000        0x0 build\system.o
+ .text.millis   0x00000000        0xc build\system.o
+ .text          0x00000000        0x0 build\display.o
+ .data          0x00000000        0x0 build\display.o
+ .bss           0x00000000        0x0 build\display.o
+ .text.display_recover
+                0x00000000      0x2f4 build\display.o
+ .text.display_draw_sprite
+                0x00000000       0xac build\display.o
+ .text.display_draw_chunk_2x
+                0x00000000       0xec build\display.o
+ .text.display_draw_chunk_cpu
+                0x00000000       0x94 build\display.o
+ .text.display_draw_chunk_dma
+                0x00000000       0x94 build\display.o
+ .text.display_draw_pixel
+                0x00000000       0x4c build\display.o
+ .text          0x00000000        0x0 build\vape.o
+ .data          0x00000000        0x0 build\vape.o
+ .bss           0x00000000        0x0 build\vape.o
+ .text          0x00000000        0x0 build\button.o
+ .data          0x00000000        0x0 build\button.o
+ .bss           0x00000000        0x0 build\button.o
+ .text.button_raw
+                0x00000000       0x10 build\button.o
+ .text          0x00000000        0x0 build\battery.o
+ .data          0x00000000        0x0 build\battery.o
+ .bss           0x00000000        0x0 build\battery.o
+ .text.bat_read_raw
+                0x00000000       0x6c build\battery.o
+ .text          0x00000000        0x0 build\nv.o
+ .data          0x00000000        0x0 build\nv.o
+ .bss           0x00000000        0x0 build\nv.o
+ .text.flash_wait
+                0x00000000       0x28 build\nv.o
+ .text.flash_erase_page
+                0x00000000       0x28 build\nv.o
+ .text.flash_unlock
+                0x00000000       0x20 build\nv.o
+ .text.nv_read  0x00000000       0x40 build\nv.o
+ .text.nv_write
+                0x00000000       0x7c build\nv.o
+ .text.nv_reset
+                0x00000000       0x2c build\nv.o
+ .comment       0x00000000       0x46 build\nv.o
+ .ARM.attributes
+                0x00000000       0x2c build\nv.o
+ .text          0x00000000        0x0 build\app.o
+ .data          0x00000000        0x0 build\app.o
+ .bss           0x00000000        0x0 build\app.o
+ .text.app_set_hold_reset
+                0x00000000       0x14 build\app.o
+ .text.app_wake
+                0x00000000        0x2 build\app.o
+ .text          0x00000000        0x0 build\doom.o
+ .data          0x00000000        0x0 build\doom.o
+ .bss           0x00000000        0x0 build\doom.o
+ .data          0x00000000        0x0 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+ .bss           0x00000000        0x0 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+ .debug_frame   0x00000000       0x20 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+ .debug_line_str
+                0x00000000       0xcd C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+ .ARM.attributes
+                0x00000000       0x1e C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+ .data          0x00000000        0x0 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+ .bss           0x00000000        0x0 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+ .debug_frame   0x00000000       0x20 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+ .debug_line_str
+                0x00000000       0xcd C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+ .ARM.attributes
+                0x00000000       0x1e C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+ .data          0x00000000        0x0 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_dvmd_tls.o)
+ .bss           0x00000000        0x0 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_dvmd_tls.o)
+ .debug_line_str
+                0x00000000       0xcd C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_dvmd_tls.o)
+ .ARM.attributes
+                0x00000000       0x1e C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_dvmd_tls.o)
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+FLASH            0x08000000         0x0000f000         xr
+SRAM             0x20000000         0x00002000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libnosys.a
+LOAD build\startup.o
+LOAD build\system.o
+LOAD build\display.o
+LOAD build\vape.o
+LOAD build\button.o
+LOAD build\battery.o
+LOAD build\nv.o
+LOAD build\app.o
+LOAD build\doom.o
+                0x20002000                        _estack = (ORIGIN (SRAM) + LENGTH (SRAM))
+
+.isr_vector     0x08000000       0xb4
+                0x08000000                        . = ALIGN (0x4)
+ *(.isr_vector)
+ .isr_vector    0x08000000       0xb4 build\startup.o
+                0x08000000                _vectors
+                0x080000b4                        . = ALIGN (0x4)
+
+.text           0x080000b4     0x26ec
+                0x080000b4                        . = ALIGN (0x4)
+ *(.text)
+ .text          0x080000b4      0x114 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
+                0x080000b4                __aeabi_uidiv
+                0x080000b4                __udivsi3
+                0x080001c0                __aeabi_uidivmod
+ .text          0x080001c8      0x1d4 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_divsi3.o)
+                0x080001c8                __divsi3
+                0x080001c8                __aeabi_idiv
+                0x08000394                __aeabi_idivmod
+ .text          0x0800039c        0x4 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_dvmd_tls.o)
+                0x0800039c                __aeabi_idiv0
+                0x0800039c                __aeabi_ldiv0
+ *(.text*)
+ .text.Reset_Handler
+                0x080003a0       0x40 build\startup.o
+                0x080003a0                Reset_Handler
+ .text.Default_Handler
+                0x080003e0        0x2 build\startup.o
+                0x080003e0                PendSV_Handler
+                0x080003e0                NMI_Handler
+                0x080003e0                TIM3_IRQHandler
+                0x080003e0                SVC_Handler
+                0x080003e0                HardFault_Handler
+ .text.SysTick_Handler
+                0x080003e2        0x2 build\system.o
+                0x080003e2                SysTick_Handler
+ .text.clock_init
+                0x080003e4       0x48 build\system.o
+                0x080003e4                clock_init
+ .text.delay_ms
+                0x0800042c       0x3c build\system.o
+                0x0800042c                delay_ms
+ .text.clock_boost_48mhz
+                0x08000468      0x110 build\system.o
+                0x08000468                clock_boost_48mhz
+ .text.system_enter_stop
+                0x08000578      0x100 build\system.o
+                0x08000578                system_enter_stop
+ .text.tim1_init
+                0x08000678       0x4c build\system.o
+                0x08000678                tim1_init
+ .text.spi_write_byte
+                0x080006c4       0x20 build\display.o
+ .text.spi_write_byte_fast
+                0x080006e4       0x18 build\display.o
+ .text.lcd_write_cmd
+                0x080006fc       0x14 build\display.o
+ .text.lcd_write_data
+                0x08000710       0x14 build\display.o
+ .text.display_gpio_init
+                0x08000724      0x12c build\display.o
+                0x08000724                display_gpio_init
+ .text.display_set_window
+                0x08000850       0x4e build\display.o
+                0x08000850                display_set_window
+ *fill*         0x0800089e        0x2 
+ .text.display_fill
+                0x080008a0       0xc4 build\display.o
+                0x080008a0                display_fill
+ .text.display_init
+                0x08000964      0x2f8 build\display.o
+                0x08000964                display_init
+ .text.display_fill_rect
+                0x08000c5c       0xa0 build\display.o
+                0x08000c5c                display_fill_rect
+ .text.display_draw_image
+                0x08000cfc       0xb8 build\display.o
+                0x08000cfc                display_draw_image
+ .text.display_set_backlight
+                0x08000db4       0x14 build\display.o
+                0x08000db4                display_set_backlight
+ .text.display_sleep_in
+                0x08000dc8       0x48 build\display.o
+                0x08000dc8                display_sleep_in
+ .text.display_sleep_out
+                0x08000e10       0x68 build\display.o
+                0x08000e10                display_sleep_out
+ .text.vape_safety_init
+                0x08000e78       0x4c build\vape.o
+                0x08000e78                vape_safety_init
+ .text.vape_init
+                0x08000ec4       0x10 build\vape.o
+                0x08000ec4                vape_init
+ .text.vape_coil_on
+                0x08000ed4        0xc build\vape.o
+                0x08000ed4                vape_coil_on
+ .text.vape_coil_off
+                0x08000ee0       0x10 build\vape.o
+                0x08000ee0                vape_coil_off
+ .text.button_init
+                0x08000ef0       0x5c build\button.o
+                0x08000ef0                button_init
+ .text.button_update
+                0x08000f4c       0x60 build\button.o
+                0x08000f4c                button_update
+ .text.button_pressed
+                0x08000fac        0xc build\button.o
+                0x08000fac                button_pressed
+ .text.button_just_pressed
+                0x08000fb8        0xc build\button.o
+                0x08000fb8                button_just_pressed
+ .text.button_just_released
+                0x08000fc4        0xc build\button.o
+                0x08000fc4                button_just_released
+ .text.button_held_ms
+                0x08000fd0       0x24 build\button.o
+                0x08000fd0                button_held_ms
+ .text.bat_init
+                0x08000ff4       0x68 build\battery.o
+                0x08000ff4                bat_init
+ .text.app_set_sleep_timeout
+                0x0800105c        0xc build\app.o
+                0x0800105c                app_set_sleep_timeout
+ .text.startup.main
+                0x08001068      0x264 build\app.o
+                0x08001068                main
+ .text.sin_q12  0x080012cc       0x3c build\doom.o
+ .text.darken   0x08001308       0x16 build\doom.o
+ *fill*         0x0800131e        0x2 
+ .text.map_is_open
+                0x08001320       0x28 build\doom.o
+ .text.draw_input_init
+                0x08001348       0x38 build\doom.o
+ .text.chunk_fill_rect
+                0x08001380       0x60 build\doom.o
+ .text.reset_wave
+                0x080013e0       0xc4 build\doom.o
+ .text.coil_stop
+                0x080014a4       0x14 build\doom.o
+ .text.draw_static_frame
+                0x080014b8       0x48 build\doom.o
+ .text.draw_char
+                0x08001500       0xa8 build\doom.o
+ .text.draw_text
+                0x080015a8       0x38 build\doom.o
+ .text.draw_death_screen
+                0x080015e0       0x50 build\doom.o
+ .text.draw_number.constprop.0
+                0x08001630       0xb0 build\doom.o
+ .text.draw_hud
+                0x080016e0       0xd0 build\doom.o
+ .text.draw_scene
+                0x080017b0      0x744 build\doom.o
+ .text.app_init
+                0x08001ef4       0x70 build\doom.o
+                0x08001ef4                app_init
+ .text.app_update
+                0x08001f64      0x5dc build\doom.o
+                0x08001f64                app_update
+ .text.app_wake
+                0x08002540       0x60 build\doom.o
+                0x08002540                app_wake
+ *(.rodata)
+ *(.rodata*)
+ .rodata.draw_death_screen.str1.1
+                0x080025a0       0x37 build\doom.o
+                                 0x19 (size before relaxing)
+ .rodata.draw_hud.str1.1
+                0x080025d7       0x13 build\doom.o
+ .rodata.draw_scene.str1.1
+                0x080025d7        0xb build\doom.o
+ .rodata.s_font
+                0x080025d7       0xbe build\doom.o
+ *fill*         0x08002695        0x3 
+ .rodata.s_spawn_y
+                0x08002698       0x10 build\doom.o
+ .rodata.s_spawn_x
+                0x080026a8       0x10 build\doom.o
+ .rodata.s_map  0x080026b8       0x64 build\doom.o
+ .rodata.sin_quarter
+                0x0800271c       0x82 build\doom.o
+                0x080027a0                        . = ALIGN (0x4)
+ *fill*         0x0800279e        0x2 
+                0x080027a0                        _etext = .
+
+.glue_7         0x080027a0        0x0
+ .glue_7        0x080027a0        0x0 linker stubs
+
+.glue_7t        0x080027a0        0x0
+ .glue_7t       0x080027a0        0x0 linker stubs
+
+.vfp11_veneer   0x080027a0        0x0
+ .vfp11_veneer  0x080027a0        0x0 linker stubs
+
+.v4_bx          0x080027a0        0x0
+ .v4_bx         0x080027a0        0x0 linker stubs
+
+.iplt           0x080027a0        0x0
+ .iplt          0x080027a0        0x0 build\startup.o
+
+.rel.dyn        0x080027a0        0x0
+ .rel.iplt      0x080027a0        0x0 build\startup.o
+
+.sprites        0x080027a0        0x0
+                0x080027a0                        . = ALIGN (0x4)
+                0x080027a0                        _sprites_start = .
+ *(.sprites)
+ *(.sprites*)
+                0x080027a0                        . = ALIGN (0x4)
+                0x080027a0                        _sprites_end = .
+                0x080027a0                        _sidata = LOADADDR (.data)
+
+.data           0x20000000        0x0 load address 0x080027a0
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _sdata = .
+ *(.data)
+ *(.data*)
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _edata = .
+
+.igot.plt       0x20000000        0x0 load address 0x080027a0
+ .igot.plt      0x20000000        0x0 build\startup.o
+
+.bss            0x20000000      0x7bc load address 0x080027a0
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _sbss = .
+ *(.bss)
+ *(.bss*)
+ .bss.g_tick_ms
+                0x20000000        0x4 build\system.o
+ .bss.g_holding
+                0x20000004        0x1 build\button.o
+ *fill*         0x20000005        0x1 
+ .bss.g_held_since
+                0x20000006        0x2 build\button.o
+ .bss.g_just_released
+                0x20000008        0x1 build\button.o
+ .bss.g_just_pressed
+                0x20000009        0x1 build\button.o
+ .bss.g_pressed
+                0x2000000a        0x1 build\button.o
+ .bss.g_hold_fired
+                0x2000000b        0x1 build\app.o
+ .bss.g_hold_cb
+                0x2000000c        0x4 build\app.o
+ .bss.g_hold_ms
+                0x20000010        0x2 build\app.o
+ .bss.g_last_active
+                0x20000012        0x2 build\app.o
+ .bss.g_sleep_ms
+                0x20000014        0x2 build\app.o
+ .bss.g_draw_high_scans
+                0x20000016        0x1 build\doom.o
+ .bss.g_draw_armed
+                0x20000017        0x1 build\doom.o
+ .bss.g_coil_cutoff_latched
+                0x20000018        0x1 build\doom.o
+ .bss.g_coil_active
+                0x20000019        0x1 build\doom.o
+ .bss.g_coil_started
+                0x2000001a        0x2 build\doom.o
+ .bss.g_clear_started
+                0x2000001c        0x2 build\doom.o
+ .bss.g_last_damage
+                0x2000001e        0x2 build\doom.o
+ .bss.g_last_enemy_step
+                0x20000020        0x2 build\doom.o
+ .bss.g_last_shot
+                0x20000022        0x2 build\doom.o
+ .bss.g_last_walk
+                0x20000024        0x2 build\doom.o
+ .bss.g_last_short_click
+                0x20000026        0x2 build\doom.o
+ .bss.g_tap_started
+                0x20000028        0x2 build\doom.o
+ .bss.g_press_started
+                0x2000002a        0x2 build\doom.o
+ .bss.g_death_overlay_drawn
+                0x2000002c        0x1 build\doom.o
+ .bss.g_ignore_wake_release
+                0x2000002d        0x1 build\doom.o
+ .bss.g_scene_dirty
+                0x2000002e        0x1 build\doom.o
+ .bss.g_screen_off
+                0x2000002f        0x1 build\doom.o
+ .bss.g_short_clicks
+                0x20000030        0x1 build\doom.o
+ .bss.g_second_tap
+                0x20000031        0x1 build\doom.o
+ .bss.g_long_press
+                0x20000032        0x1 build\doom.o
+ .bss.g_tap_pending
+                0x20000033        0x1 build\doom.o
+ .bss.g_muzzle_frames
+                0x20000034        0x1 build\doom.o
+ .bss.g_hud_dirty
+                0x20000035        0x1 build\doom.o
+ .bss.g_dead    0x20000036        0x1 build\doom.o
+ .bss.g_wave    0x20000037        0x1 build\doom.o
+ .bss.g_kills   0x20000038        0x1 build\doom.o
+ .bss.g_ammo    0x20000039        0x1 build\doom.o
+ .bss.g_health  0x2000003a        0x1 build\doom.o
+ .bss.g_angle   0x2000003b        0x1 build\doom.o
+ .bss.g_player_y
+                0x2000003c        0x4 build\doom.o
+ .bss.g_player_x
+                0x20000040        0x4 build\doom.o
+ .bss.g_frame_buffer
+                0x20000044      0x600 build\doom.o
+ .bss.g_screen_enemies
+                0x20000644       0x28 build\doom.o
+ .bss.g_wall_color
+                0x2000066c       0x60 build\doom.o
+ .bss.g_wall_bottom
+                0x200006cc       0x30 build\doom.o
+ .bss.g_wall_top
+                0x200006fc       0x30 build\doom.o
+ .bss.g_zbuf    0x2000072c       0x60 build\doom.o
+ .bss.g_enemies
+                0x2000078c       0x30 build\doom.o
+ *(COMMON)
+                0x200007bc                        . = ALIGN (0x4)
+                0x200007bc                        _ebss = .
+
+.stack          0x200007c0      0x800 load address 0x080027a0
+                0x200007c0                        . = ALIGN (0x8)
+ *(.stack)
+ .stack         0x200007c0      0x800 build\startup.o
+
+/DISCARD/
+ libc.a(*)
+ libm.a(*)
+ libgcc.a(*)
+OUTPUT(build\doom.elf elf32-littlearm)
+LOAD linker stubs
+LOAD C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libc.a
+LOAD C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libm.a
+LOAD C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a
+
+.ARM.attributes
+                0x00000000       0x2d
+ .ARM.attributes
+                0x00000000       0x21 build\startup.o
+ .ARM.attributes
+                0x00000021       0x2c build\system.o
+ .ARM.attributes
+                0x0000004d       0x2c build\display.o
+ .ARM.attributes
+                0x00000079       0x2c build\vape.o
+ .ARM.attributes
+                0x000000a5       0x2c build\button.o
+ .ARM.attributes
+                0x000000d1       0x2c build\battery.o
+ .ARM.attributes
+                0x000000fd       0x2c build\app.o
+ .ARM.attributes
+                0x00000129       0x2c build\doom.o
+
+.comment        0x00000000       0x45
+ .comment       0x00000000       0x45 build\system.o
+                                 0x46 (size before relaxing)
+ .comment       0x00000045       0x46 build\display.o
+ .comment       0x00000045       0x46 build\vape.o
+ .comment       0x00000045       0x46 build\button.o
+ .comment       0x00000045       0x46 build\battery.o
+ .comment       0x00000045       0x46 build\app.o
+ .comment       0x00000045       0x46 build\doom.o

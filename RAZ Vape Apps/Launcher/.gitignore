@@ -1,4 +1,6 @@
-/build/
+/build/*
+!/build/
+!/build/launcher.bin
 /generated/photos.h
 /generated/vape_level_seed.h
 /direct_flash.tcl

@@ -1,5 +1,6 @@
-/build/
+/build/*
+!/build/
+!/build/slideshow.bin
 /generated/photos.h
 /direct_flash.tcl
 __pycache__/
-

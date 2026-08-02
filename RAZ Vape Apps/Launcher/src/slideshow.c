@@ -8,6 +8,8 @@
 #include "button.h"
 #include "display.h"
 #include "draw_sensor.h"
+#include "launcher_battery.h"
+#include "nv.h"
 #include "system.h"
 #include "vape_level.h"
 #include "photos.h"
@@ -20,6 +22,17 @@
 #define BOOST_MAX_MS            900u
 #define NORMAL_ON_FRAME(frame) (((frame) & 1u) == 0u)
 #define IMAGE_CHUNK_ROWS        16u
+
+/* Launcher-only output profile. The ESP32 configuration tool writes one of
+ * these values to NV_KEY_APP_2. Values outside this signed format fall back
+ * to the original current-app behavior. No profile increases the existing
+ * duty cycle or cutoff time. */
+#define COIL_PROFILE_NV_KEY       NV_KEY_APP_2
+#define COIL_PROFILE_MAGIC        0x43504F00UL
+#define COIL_PROFILE_MAGIC_MASK   0xFFFFFF00UL
+#define COIL_PROFILE_DEFAULT      0u
+#define COIL_PROFILE_CONSERVATIVE 1u
+#define COIL_PROFILE_DISABLED     2u
 
 typedef enum {
     MODE_NORMAL = 0,
@@ -43,6 +56,44 @@ static uint8_t g_press_fired;
 static uint8_t g_draw_cutoff_latched;
 static output_mode_t g_mode;
 static fire_source_t g_fire_source;
+static uint8_t g_coil_profile;
+static uint8_t g_battery_percent_drawn;
+static uint8_t g_battery_low_drawn;
+
+static uint8_t coil_profile_load(void)
+{
+    const uint32_t value = nv_read(COIL_PROFILE_NV_KEY, 0xFFFFFFFFUL);
+    const uint8_t profile = (uint8_t)value;
+
+    if ((value & COIL_PROFILE_MAGIC_MASK) == COIL_PROFILE_MAGIC &&
+        profile <= COIL_PROFILE_DISABLED) {
+        return profile;
+    }
+    return COIL_PROFILE_DEFAULT;
+}
+
+static uint8_t coil_output_enabled(void)
+{
+    return g_coil_profile != COIL_PROFILE_DISABLED;
+}
+
+static uint8_t coil_output_active(uint32_t frame)
+{
+    if (g_coil_profile == COIL_PROFILE_CONSERVATIVE) {
+        /* Normal: one third duty. Boost: half duty. */
+        return (g_mode == MODE_BOOST) ? (uint8_t)((frame & 1u) == 0u)
+                                      : (uint8_t)((frame % 3u) == 0u);
+    }
+    return (g_mode == MODE_BOOST) || NORMAL_ON_FRAME(frame);
+}
+
+static uint16_t coil_cutoff_ms(void)
+{
+    if (g_coil_profile == COIL_PROFILE_CONSERVATIVE) {
+        return (g_mode == MODE_BOOST) ? 700u : 1500u;
+    }
+    return (g_mode == MODE_BOOST) ? BOOST_MAX_MS : NORMAL_MAX_MS;
+}
 
 static void coil_stop(void)
 {
@@ -65,6 +116,39 @@ static void draw_mode_marker(void)
     display_fill_rect(3u, 3u, 6u, 6u, colour);
 }
 
+static void draw_battery_indicator(void)
+{
+    const uint8_t percent = launcher_battery_percent();
+    const uint8_t low = launcher_battery_low();
+    const uint16_t colour = low ? COL_RED :
+        ((percent >= 60u) ? COL_GREEN : ((percent >= 25u) ? COL_YELLOW : COL_ORANGE));
+    const uint16_t fill = (uint16_t)(((uint32_t)percent * 16u + 99u) / 100u);
+
+    /* Compact 16-pixel battery fill at the upper-right, leaving the selected
+     * photo unobscured. The main menu supplies the larger low-battery warning. */
+    display_fill_rect(98u, 2u, 27u, 10u, COL_BLACK);
+    display_fill_rect(100u, 3u, 20u, 1u, COL_WHITE);
+    display_fill_rect(100u, 10u, 20u, 1u, COL_WHITE);
+    display_fill_rect(100u, 3u, 1u, 8u, COL_WHITE);
+    display_fill_rect(119u, 3u, 1u, 8u, COL_WHITE);
+    display_fill_rect(121u, 5u, 2u, 4u, COL_WHITE);
+    if (fill) {
+        display_fill_rect(102u, 5u, fill, 4u, colour);
+    }
+    g_battery_percent_drawn = percent;
+    g_battery_low_drawn = low;
+}
+
+static void update_battery_indicator(void)
+{
+    const uint8_t percent = launcher_battery_percent();
+    const uint8_t low = launcher_battery_low();
+
+    if (percent != g_battery_percent_drawn || low != g_battery_low_drawn) {
+        draw_battery_indicator();
+    }
+}
+
 static void render_slide(uint8_t index)
 {
     const slideshow_image_t *image = &g_slides[index];
@@ -84,6 +168,7 @@ static void render_slide(uint8_t index)
         display_draw_chunk_cpu(g_decode_buffer, row_start, rows);
     }
     draw_mode_marker();
+    draw_battery_indicator();
 }
 
 static void show_next_slide(uint16_t now)
@@ -128,6 +213,11 @@ static void update_coil(uint32_t frame, uint16_t now)
 {
     const uint8_t drawing = draw_sensor_active();
 
+    if (!coil_output_enabled()) {
+        coil_stop();
+        return;
+    }
+
     if (!drawing) {
         g_draw_cutoff_latched = 0u;
     }
@@ -152,7 +242,7 @@ static void update_coil(uint32_t frame, uint16_t now)
 
     {
         const uint16_t elapsed = (uint16_t)(now - g_fire_started);
-        const uint16_t cutoff = (g_mode == MODE_BOOST) ? BOOST_MAX_MS : NORMAL_MAX_MS;
+        const uint16_t cutoff = coil_cutoff_ms();
         if (elapsed >= cutoff) {
             if (g_fire_source == FIRE_DRAW) {
                 g_draw_cutoff_latched = 1u;
@@ -163,7 +253,7 @@ static void update_coil(uint32_t frame, uint16_t now)
         }
     }
 
-    if (g_mode == MODE_BOOST || NORMAL_ON_FRAME(frame)) {
+    if (coil_output_active(frame)) {
         vape_level_coil_on();
     } else {
         vape_level_coil_pause();
@@ -177,7 +267,10 @@ void slideshow_init(void)
     g_firing = 0u;
     g_press_fired = 0u;
     g_draw_cutoff_latched = 0u;
+    g_battery_percent_drawn = 0xFFu;
+    g_battery_low_drawn = 0xFFu;
     g_mode = MODE_NORMAL;
+    g_coil_profile = coil_profile_load();
     coil_stop();
     draw_sensor_init();
     g_slide_started = ms_now();
@@ -189,6 +282,7 @@ uint8_t slideshow_update(uint32_t frame)
     const uint16_t now = ms_now();
 
     update_coil(frame, now);
+    update_battery_indicator();
 
     if (button_just_released()) {
         if (!g_press_fired) {
@@ -217,6 +311,9 @@ void slideshow_wake(void)
     g_tap_count = 0u;
     g_press_fired = 0u;
     g_draw_cutoff_latched = 0u;
+    g_battery_percent_drawn = 0xFFu;
+    g_battery_low_drawn = 0xFFu;
+    g_coil_profile = coil_profile_load();
     draw_sensor_init();
     g_slide_started = ms_now();
     render_slide(g_slide_index);

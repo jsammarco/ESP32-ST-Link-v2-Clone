@@ -14,15 +14,19 @@ CONVERTER = PROJECT_DIR.parent / "Slideshow" / "convert_images.py"
 if not CONVERTER.is_file():
     raise SystemExit(f"Shared photo converter is missing: {CONVERTER}")
 
-if len(sys.argv) == 1:
-    sys.argv.extend(
-        [
-            "--input", str(PROJECT_DIR.parent / "photos"),
-            "--output", str(PROJECT_DIR / "generated" / "photos.h"),
-            "--max-images", "3",
-        ]
-    )
+arguments = sys.argv[1:]
 
-sys.argv[0] = str(CONVERTER)
+
+def has_option(name: str) -> bool:
+    return any(argument == name or argument.startswith(f"{name}=") for argument in arguments)
+
+
+if not has_option("--input"):
+    arguments.extend(["--input", str(PROJECT_DIR.parent / "photos")])
+if not has_option("--output"):
+    arguments.extend(["--output", str(PROJECT_DIR / "generated" / "photos.h")])
+if not has_option("--max-images"):
+    arguments.extend(["--max-images", "3"])
+
+sys.argv = [str(CONVERTER), *arguments]
 runpy.run_path(str(CONVERTER), run_name="__main__")
-

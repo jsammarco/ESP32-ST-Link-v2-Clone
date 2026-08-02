@@ -48,6 +48,17 @@ constexpr size_t FAST_IMAGE_MAX_BYTES = 64 * 1024;
 constexpr size_t TARGET_RAM_BYTES = 8 * 1024;
 constexpr uint32_t FLASH_BASE = 0x08000000;
 constexpr uint32_t FLASH_PAGE_SIZE = 512;
+constexpr uint32_t NV_BASE = FLASH_BASE + 60 * 1024;
+constexpr uint32_t NV_MAGIC = 0xA55A0000U;
+constexpr uint32_t NV_MAGIC_MASK = 0xFFFF0000U;
+constexpr uint8_t NV_KEY_COUNT = 8;
+constexpr uint8_t NV_SLOTS_PER_KEY = FLASH_PAGE_SIZE / 8;
+constexpr uint8_t NV_KEY_LAUNCHER_LEVEL = 5;
+constexpr uint8_t NV_KEY_LAUNCHER_PROFILE = 7;
+constexpr uint32_t LAUNCHER_EMPTY_TICKS = 340000U;
+constexpr uint32_t COIL_PROFILE_MAGIC = 0x43504F00U;
+constexpr uint32_t COIL_PROFILE_MAGIC_MASK = 0xFFFFFF00U;
+constexpr uint8_t COIL_PROFILE_MAX = 2;
 constexpr uint32_t IWDG_KR = 0x40003000;
 constexpr uint32_t IWDG_PR = 0x40003004;
 constexpr uint32_t IWDG_RLR = 0x40003008;
@@ -590,6 +601,164 @@ void fast_backup_command() {
   }
 }
 
+bool fast_read_nv_value(uint8_t key, uint32_t *value, bool *found) {
+  *found = false;
+  const uint32_t page = NV_BASE + static_cast<uint32_t>(key) * FLASH_PAGE_SIZE;
+  for (int slot = NV_SLOTS_PER_KEY - 1; slot >= 0; --slot) {
+    const uint32_t address = page + static_cast<uint32_t>(slot) * 8U;
+    uint32_t header = 0;
+    if (!fast_mem_read32(address, &header)) {
+      return false;
+    }
+    if ((header & NV_MAGIC_MASK) == NV_MAGIC && static_cast<uint8_t>(header) == key) {
+      if (!fast_mem_read32(address + 4U, value)) {
+        return false;
+      }
+      *found = true;
+      return true;
+    }
+  }
+  return true;
+}
+
+bool fast_nv_write(uint8_t key, uint32_t value) {
+  const uint32_t page = NV_BASE + static_cast<uint32_t>(key) * FLASH_PAGE_SIZE;
+  int blank_slot = -1;
+
+  // Match the runtime's write-forward NV format: append an 8-byte record and
+  // erase only this key's page when it has no blank slot left.
+  for (uint8_t slot = 0; slot < NV_SLOTS_PER_KEY; ++slot) {
+    uint32_t header = 0;
+    uint32_t payload = 0;
+    const uint32_t address = page + static_cast<uint32_t>(slot) * 8U;
+    if (!fast_mem_read32(address, &header) || !fast_mem_read32(address + 4U, &payload)) {
+      return false;
+    }
+    if (header == 0xFFFFFFFFU && payload == 0xFFFFFFFFU) {
+      blank_slot = slot;
+      break;
+    }
+  }
+
+  if (!fast_mem_write32(IWDG_KR, 0x0000AAAAU) ||
+      !fast_mem_write32(FLASH_KEYR, 0x45670123U) ||
+      !fast_mem_write32(FLASH_KEYR, 0xCDEF89ABU) ||
+      !fast_mem_write32(FLASH_SR, 0x00000034U)) {
+    return false;
+  }
+
+  if (blank_slot < 0) {
+    if (!fast_mem_write32(FLASH_AR, page) ||
+        !fast_mem_write32(FLASH_CR, 0x00000002U) ||
+        !fast_mem_write32(FLASH_CR, 0x00000042U) ||
+        !fast_flash_wait_idle()) {
+      return false;
+    }
+    blank_slot = 0;
+  }
+
+  const uint32_t slot_address = page + static_cast<uint32_t>(blank_slot) * 8U;
+  const bool written = fast_mem_write32(FLASH_CR, 0x00000001U) &&
+      fast_mem_write32(slot_address + 4U, value) && fast_flash_wait_idle() &&
+      fast_mem_write32(slot_address, NV_MAGIC | key) && fast_flash_wait_idle();
+  // Re-lock whether the write succeeded or not; configuration must never
+  // leave the target flash interface unlocked.
+  const bool locked = fast_mem_write32(FLASH_CR, 0x00000080U);
+  return written && locked;
+}
+
+bool fast_valid_launcher_config(uint8_t key, uint32_t value) {
+  if (key == NV_KEY_LAUNCHER_LEVEL) {
+    return value <= LAUNCHER_EMPTY_TICKS;
+  }
+  if (key == NV_KEY_LAUNCHER_PROFILE) {
+    return (value & COIL_PROFILE_MAGIC_MASK) == COIL_PROFILE_MAGIC &&
+        static_cast<uint8_t>(value) <= COIL_PROFILE_MAX;
+  }
+  return false;
+}
+
+void fast_launcher_config_command() {
+  uint8_t header[5];
+  if (!read_serial_exact(header, sizeof(header), 3000)) {
+    Serial.println("ERR HEADER");
+    return;
+  }
+  const uint8_t key = header[0];
+  const uint32_t value = static_cast<uint32_t>(header[1]) |
+      (static_cast<uint32_t>(header[2]) << 8) |
+      (static_cast<uint32_t>(header[3]) << 16) |
+      (static_cast<uint32_t>(header[4]) << 24);
+  if (!fast_valid_launcher_config(key, value)) {
+    Serial.println("ERR CONFIG");
+    return;
+  }
+
+  uint32_t dpidr = 0;
+  if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
+    Serial.println("ERR CONNECT");
+    return;
+  }
+  Serial.printf("IDR %08lX\n", static_cast<unsigned long>(dpidr));
+  if (!fast_nv_write(key, value)) {
+    Serial.println("ERR CONFIG_WRITE");
+    return;
+  }
+  uint32_t verified = 0;
+  bool found = false;
+  if (!fast_read_nv_value(key, &verified, &found) || !found || verified != value) {
+    Serial.println("ERR CONFIG_VERIFY");
+    return;
+  }
+  Serial.printf("CONFIG_OK %u %08lX\n", static_cast<unsigned>(key),
+                static_cast<unsigned long>(value));
+  if (!fast_reset_target()) {
+    Serial.println("ERR RESET");
+    return;
+  }
+  Serial.println("DONE");
+}
+
+void fast_values_command() {
+  uint32_t dpidr = 0;
+  if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
+    Serial.println("ERR CONNECT");
+    return;
+  }
+  delay(2);
+  Serial.printf("VALUES %08lX\n", static_cast<unsigned long>(dpidr));
+
+  bool listed = true;
+  for (uint8_t key = 0; key < NV_KEY_COUNT; ++key) {
+    // The CPU is halted but its independent watchdog is not.
+    if (!fast_mem_write32_sync(IWDG_KR, 0x0000AAAAU)) {
+      listed = false;
+      break;
+    }
+    uint32_t value = 0;
+    bool found = false;
+    if (!fast_read_nv_value(key, &value, &found)) {
+      listed = false;
+      break;
+    }
+    if (found) {
+      Serial.printf("NV %u %08lX\n", static_cast<unsigned>(key),
+                    static_cast<unsigned long>(value));
+    } else {
+      Serial.printf("NV %u NONE\n", static_cast<unsigned>(key));
+    }
+  }
+
+  const bool resumed = fast_resume_target();
+  if (!listed) {
+    Serial.println("ERR VALUES");
+  } else if (!resumed) {
+    Serial.println("ERR RESUME");
+  } else {
+    Serial.println("DONE");
+  }
+}
+
 void fast_restore_command() {
   uint8_t header[4];
   if (!read_serial_exact(header, sizeof(header), 3000)) {
@@ -641,6 +810,14 @@ void handle_command(uint8_t command) {
   }
   if (command == 'K') {
     fast_backup_command();
+    return;
+  }
+  if (command == 'N') {
+    fast_launcher_config_command();
+    return;
+  }
+  if (command == 'V') {
+    fast_values_command();
     return;
   }
   if (command == 'X') {

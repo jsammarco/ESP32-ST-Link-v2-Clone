@@ -2,12 +2,16 @@
 setlocal
 cd /d "%~dp0"
 
-set APP_NAME=launcher
+if defined LAUNCHER_APP_NAME (
+  set APP_NAME=%LAUNCHER_APP_NAME%
+) else (
+  set APP_NAME=launcher
+)
 set PYTHON=python
 set GCC="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-gcc.exe"
 set OBJCOPY="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-objcopy.exe"
 set SIZE="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-size.exe"
-set VAPORWARE=%~dp0..\..\src
+if not defined VAPORWARE set VAPORWARE=%~dp0..\..\src
 
 set CPU=-mcpu=cortex-m0 -mthumb
 set INC=-I%VAPORWARE%\include -Isrc -Igenerated
@@ -20,7 +24,13 @@ echo [0/15] Preparing factory vape seed...
 %PYTHON% make_vape_seed.py || goto :error
 
 echo [1/15] Converting photos...
-%PYTHON% convert_images.py || goto :error
+if defined LAUNCHER_PHOTOS (
+  %PYTHON% convert_images.py --input "%LAUNCHER_PHOTOS%" || goto :error
+) else if exist generated\photos.h (
+  echo Using existing generated\photos.h. Set LAUNCHER_PHOTOS to rebuild it from source images.
+) else (
+  %PYTHON% convert_images.py || goto :error
+)
 
 echo [2/15] startup.s  (vaporware)
 %GCC% %CPU% -x assembler-with-cpp -c %VAPORWARE%\src\startup.s -o build\startup.o || goto :error

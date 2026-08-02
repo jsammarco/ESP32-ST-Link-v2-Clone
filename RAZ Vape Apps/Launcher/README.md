@@ -36,12 +36,28 @@ output with a 0.9 s hard cutoff.
 
 ## Battery status
 
-The menu shows a colour-coded battery percentage derived from the existing PA6 battery
-ADC thresholds: 0% at the critical threshold and 100% at the project's full threshold.
+The menu takes five PA6 ADC readings per update, uses their median, and applies a
+small smoothing filter before mapping the result through a single-cell Li-ion voltage
+curve. This makes the displayed percentage steadier and avoids the old linear
+2.5–3.7 V scale, which made normal battery discharge look jumpy.
+
+The Launcher enters **LOW BATTERY** at approximately 3.40 V (or immediately at
+approximately 3.30 V), dims the PB4 backlight to 20% using 1 kHz PWM, exits any
+running app to the warning screen, and locks the coil OFF. The lock applies to both
+the Slideshow and embedded Flappy code, so no app can energize the coil in this mode.
+After charging, it requires three consecutive filtered readings around 3.53 V or
+higher before restoring normal brightness and coil operation. These are conservative
+guard bands; actual voltage varies with cell condition, temperature, and load.
+
 `CHARGING` is a direct active-low signal from PB1, matching the input and internal
 pull-up configuration in `firmware/MyWhiteRAZ_backup.bin`. It shows while the charge
 controller reports active charging; a USB-connected but fully charged device may not
 show `CHARGING`.
+
+The Launcher's embedded Slideshow also shows a compact battery icon in the
+upper-right corner. It uses the same filtered percentage and low-battery state as
+the menu; green is 60% or higher, yellow is 25-59%, orange is below 25%, and red
+means the low-battery lockout is active.
 
 ## Vape remaining level
 
@@ -85,6 +101,11 @@ flash_vape.bat
 `generated\photos.h` from the three source images. The generated image data and all
 build/flash output are ignored by Git. The default three-photo configuration was
 chosen to leave headroom in the N32G031's 60 KB application flash region.
+
+For a one-off Launcher image with up to three selected embedded-Slideshow photos,
+use the desktop GUI's **Choose up to 3 photos...** button while **Launcher** is
+selected. It builds `build\launcher-photos.bin` separately, then restores the normal
+generated image header, so the bundled `launcher.bin` is not replaced.
 
 The flasher is compatible with an ST-Link already attached through `usbipd`; set
 `STLINK_BUSID` near the top of `flash_vape.bat` if your adapter uses a different ID.

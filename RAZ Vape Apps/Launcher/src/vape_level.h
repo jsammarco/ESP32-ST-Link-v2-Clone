@@ -15,6 +15,11 @@ void vape_level_coil_on(void);
 void vape_level_coil_off(void);
 void vape_level_coil_pause(void); /* PWM off phase; does not force an NV write */
 
+/* Hard safety interlock controlled by the Launcher's filtered battery monitor.
+ * When locked, every coil-on request is ignored and the physical coil gate is
+ * held LOW. */
+void vape_level_set_battery_lockout(uint8_t locked);
+
 uint8_t vape_level_bars(void);     /* 0-6, matching the factory scale */
 uint8_t vape_level_percent(void);  /* 0-100, for the launcher display */
 

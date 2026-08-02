@@ -3,14 +3,19 @@ setlocal
 cd /d "%~dp0"
 
 :: Build Slideshow and convert examples\photos into flash-friendly C assets.
-set APP_NAME=slideshow
+if defined SLIDESHOW_APP_NAME (
+  set APP_NAME=%SLIDESHOW_APP_NAME%
+) else (
+  set APP_NAME=slideshow
+)
 set PYTHON=python
 set GCC="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-gcc.exe"
 set OBJCOPY="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-objcopy.exe"
 set SIZE="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-size.exe"
 
-:: SDK root - two levels up from examples\Slideshow.
-set VAPORWARE=%~dp0..\..\src
+:: SDK root - two levels up from examples\Slideshow. Set VAPORWARE before
+:: running this script to use a separate Vaporware SDK checkout.
+if not defined VAPORWARE set VAPORWARE=%~dp0..\..\src
 
 set CPU=-mcpu=cortex-m0 -mthumb
 set INC=-I%VAPORWARE%\include -Igenerated
@@ -20,7 +25,13 @@ if not exist generated mkdir generated
 if not exist build mkdir build
 
 echo [0/10] Converting photos...
-%PYTHON% convert_images.py --input ..\photos --output generated\photos.h --max-images 3 || goto :error
+if defined SLIDESHOW_PHOTOS (
+  %PYTHON% convert_images.py --input "%SLIDESHOW_PHOTOS%" --output generated\photos.h --max-images 3 || goto :error
+) else if exist generated\photos.h (
+  echo Using existing generated\photos.h. Set SLIDESHOW_PHOTOS to rebuild it from selected source images.
+) else (
+  %PYTHON% convert_images.py --input ..\photos --output generated\photos.h --max-images 3 || goto :error
+)
 
 echo [1/10] startup.s  (vaporware)
 %GCC% %CPU% -x assembler-with-cpp -c %VAPORWARE%\src\startup.s -o build\startup.o || goto :error

@@ -32,6 +32,7 @@ static uint16_t g_last_accounted_ms;
 static uint8_t g_tick_remainder_ms;
 static uint8_t g_coil_on;
 static uint8_t g_dirty;
+static uint8_t g_battery_lockout;
 
 static void account_heater_time(uint16_t now)
 {
@@ -108,11 +109,25 @@ void vape_level_update(void)
 
 void vape_level_coil_on(void)
 {
+    if (g_battery_lockout) {
+        /* Do not start accounting or energize the coil while voltage is low. */
+        vape_coil_off();
+        return;
+    }
     if (!g_coil_on) {
         g_last_accounted_ms = ms_now();
         g_coil_on = 1u;
     }
     vape_coil_on();
+}
+
+void vape_level_set_battery_lockout(uint8_t locked)
+{
+    g_battery_lockout = (locked != 0u);
+    if (g_battery_lockout) {
+        /* Stop immediately, including an in-progress draw or game event. */
+        vape_level_coil_off();
+    }
 }
 
 void vape_level_coil_off(void)
