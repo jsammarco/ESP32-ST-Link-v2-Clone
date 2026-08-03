@@ -1,8 +1,10 @@
 # Launcher
 
-One firmware image containing a launcher menu and one or two build-selected apps.
-Tetris, Pac-Man, Flappy Bird, and Slideshow can occupy either slot. The RAZ ESP32 Manager
-builds a fresh image from its two Launcher bundle selectors before flashing.
+One firmware image containing a launcher menu and one or more build-selected apps.
+Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Doom,
+Flappy Bird, and Slideshow can be included in any combination that fits. The
+RAZ ESP32 Manager builds a fresh image from its Launcher bundle checkboxes
+before flashing.
 
 ## Controls
 
@@ -19,6 +21,21 @@ builds a fresh image from its two Launcher bundle selectors before flashing.
 | Pac-Man | Two short presses | Queue a left turn |
 | Pac-Man | Hold 450 ms | Reverse direction |
 | Pac-Man | Hold 2 s, then release | Return to menu |
+| Mario 1-1 | One short press | Toggle running forward on or off |
+| Mario 1-1 | Two short presses within 260 ms | Step backward two tiles |
+| Mario 1-1 | Hold 420 ms | Jump once |
+| Mario 1-1 | Hold 2 s, then release | Return to menu |
+| Geometry Dash | Press | Start or jump; activate a nearby orb in midair |
+| Geometry Dash | Hold | Chain another jump whenever the cube lands |
+| Geometry Dash | Hold 2 s, then release | Return to menu |
+| Chrome Dino | Press | Start, jump from the ground, or retry |
+| Chrome Dino | Hold 2 s, then release | Return to menu |
+| Tower Stacker | Press | Start, drop the moving floor, or retry after a miss |
+| Tower Stacker | Hold 2 s, then release | Return to menu |
+| Doom | One tap / two taps | Turn right / turn left |
+| Doom | Hold about 0.2 seconds | Walk forward; keep holding to continue |
+| Doom | Draw from mouthpiece | Fire with bounded Normal coil output |
+| Doom | Hold 2 s, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Double-tap | Switch Normal / Boost output mode |
 | Slideshow | Triple-tap | Return to menu |
@@ -31,8 +48,9 @@ Every launcher transition turns the coil output off first. Pac-Man never request
 coil output. Tetris never requests coil output during ordinary play. Clearing a
 row opens a 1.5-second `VAPE NOW` window measured from the clear; only an active
 pressure-sensor draw inside that window can enable it, and release or timeout
-stops it immediately. The embedded Flappy code keeps its current score-triggered
-coil behaviour, so its own safeguards and controls remain unchanged.
+stops it immediately. The embedded Doom and Flappy code keep their existing
+bounded coil behaviour, with coil requests routed through the Launcher's
+low-battery interlock and remaining-level accounting.
 
 Pac-Man uses the canonical 28x31 arcade maze and moves one tile every 480 ms.
 Requested turns stay buffered until legal; unambiguous corners and dead-end
@@ -118,13 +136,25 @@ flash_vape.bat
 ```
 
 `build_launcher.bat` defaults to Tetris plus Flappy. `configure_launcher.py`
-generates the slot labels and module-selection flags, and the build compiles only
-the selected modules. Generated configuration, image data, and build output are
-ignored by Git.
+generates the ordered app labels and module-selection flags, and the build
+compiles only the selected modules. The on-device menu scrolls through three
+cards at a time when more than three apps are included. Generated
+configuration, image data, and build output are ignored by Git.
 
-For a one-off image, choose up to two apps in the desktop GUI. If one slot is
-Slideshow, **Choose up to 3 photos...** can replace its embedded images. The GUI
-builds `build\launcher-custom.bin` separately, so `launcher.bin` is not replaced.
+For a one-off image, check any number of apps in the desktop GUI. If Slideshow
+is selected, **Choose up to 3 photos...** can replace its embedded images. The
+storage bar projects the combined code, photos, and optional screen streamer
+against the 60 KB application region; the remaining 4 KB is reserved for saved
+values. The GUI verifies the exact linked size and builds
+`build\launcher-custom.bin` separately, so `launcher.bin` is not replaced.
+
+For a direct command-line build with more than two modules, pass quoted app
+names through `LAUNCHER_APPS` before running the batch file:
+
+```cmd
+set LAUNCHER_APPS="Tetris" "Pac-Man" "Tower Stacker" "Chrome Dino"
+build_launcher.bat
+```
 
 The flasher is compatible with an ST-Link already attached through `usbipd`; set
 `STLINK_BUSID` near the top of `flash_vape.bat` if your adapter uses a different ID.

@@ -39,11 +39,13 @@ physical ST-Link is required.
 
 | App | Ready-to-flash image | Notes |
 |---|---|---|
-| Launcher | [`launcher.bin`](<RAZ Vape Apps/Launcher/build/launcher.bin>) | Configurable menu containing one or two selected apps. |
+| Launcher | [`launcher.bin`](<RAZ Vape Apps/Launcher/build/launcher.bin>) | Configurable scrolling menu containing any selected apps that fit in flash. |
 | Tetris | [`tetris.bin`](<RAZ Vape Apps/Tetris/build/tetris.bin>) | Standalone one-button Tetris game. |
 | Pac-Man | [`pacman.bin`](<RAZ Vape Apps/Pacman/build/pacman.bin>) | Standalone one-button maze-chase game. |
 | Mario 1-1 | [`mario.bin`](<RAZ Vape Apps/Mario/build/mario.bin>) | Full-length one-button side-scrolling first level. |
 | Geometry Dash | [`geometry-dash.bin`](<RAZ Vape Apps/GeometryDash/build/geometry-dash.bin>) | Complete one-button neon obstacle course. |
+| Chrome Dino | [`chrome-dino.bin`](<RAZ Vape Apps/ChromeDino/build/chrome-dino.bin>) | Faithful one-button Chrome offline dinosaur runner. |
+| Tower Stacker | [`tower-stacker.bin`](<RAZ Vape Apps/TowerStacker/build/tower-stacker.bin>) | Precision one-button tower-building game with trimming, combos, and rising speed. |
 | Slideshow | [`slideshow.bin`](<RAZ Vape Apps/Slideshow/build/slideshow.bin>) | Photo slideshow. Its source includes limited coil-output modes; review it carefully before use. |
 | Flappy | [`flappy.bin`](<RAZ Vape Apps/flappy/build/flappy.bin>) | Flappy-style application for the vape display. |
 
@@ -102,7 +104,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\start_raz_manage
 Select the ESP32's COM port in the window. The GUI excludes `COM1` from its
 port list because that is normally the legacy motherboard serial port. It can
 test the SWD connection, create a named (or timestamped) backup, restore a
-selected backup, flash Launcher/Tetris/Pac-Man/Mario 1-1/Geometry Dash/Slideshow/Flappy or a custom `.bin`, and display the persisted
+selected backup, flash Launcher/Tetris/Pac-Man/Mario 1-1/Geometry Dash/Chrome Dino/Tower Stacker/Slideshow/Flappy or a custom `.bin`, and display the persisted
 internal-flash values. It runs the same `fast_flash.py` protocol as the
 command-line workflow and its log shows the exact ESP32 progress messages.
 
@@ -119,10 +121,14 @@ HTML plus a small CSS subset, and sends only a ten-line viewport to the N32. In 
 page, one click scrolls down, double click scrolls up, and a 1.5-second hold
 returns to the menu. See the POC guide for keyboard controls and parser limits.
 
-When **Launcher** is selected, choose one or two bundled apps from the two
-**Launcher bundle** boxes. The available modules are Tetris, Pac-Man, Flappy, and
-Slideshow; choose **None** in the second box for a one-app launcher. The Manager
-builds `launcher-custom.bin` from that selection before it backs up and flashes.
+When **Launcher** is selected, choose one or more bundled apps from the
+**Launcher bundle** checkboxes. The available modules are Tetris, Pac-Man,
+Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Doom, Flappy, and
+Slideshow. The Manager shows a live flash-storage bar that includes selected
+photos and the optional screen streamer, then builds `launcher-custom.bin`
+before it backs up and flashes. The MCU has 64 KB total flash; application
+builds are limited to 60 KB so the final 4 KB remains reserved for saved
+values. The exact linked image size is checked again before flashing.
 
 When standalone **Slideshow** is selected, or Launcher includes a Slideshow
 slot, use **Choose up to 3 photos...** to select one to three `.bmp`, `.gif`,
@@ -149,10 +155,9 @@ that operation.
 ### Live screen streaming
 
 Check **Add full-resolution SWD screen streamer (128×160)** before flashing
-Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Flappy, or Slideshow. The Manager builds a separate
+Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Flappy, or Slideshow. The Manager builds a separate
 `*-stream.bin` image and leaves each normal prebuilt image unchanged. For
-Launcher, the stream covers its menu and every selected module, including
-Flappy, Tetris, Pac-Man, and Slideshow.
+Launcher, the stream covers its menu and every selected module.
 
 After upgrading from the older 64x80 streamer, run **Update ESP32 firmware...**
 once and reflash the selected RAZ app with the full-resolution streamer checked;
@@ -276,7 +281,7 @@ For Launcher:
 python tools\fast_flash.py --port COM7 --flash ".\RAZ Vape Apps\Launcher\build\launcher.bin"
 ```
 
-For Tetris, Pac-Man, Mario 1-1, Geometry Dash, Slideshow, or Flappy, replace the image path with the corresponding `.bin`
+For Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Slideshow, or Flappy, replace the image path with the corresponding `.bin`
 listed above. The flasher displays `ERASE`, `PROGRAM`, and `VERIFY` progress.
 Only `DONE` means the image verified and the ESP32 requested a target reset.
 
@@ -341,8 +346,8 @@ a standalone file, then choose the 64 KB `.bin` image.
 
 ## Game controls
 
-Launcher contains the one or two modules selected in the Manager. Mario 1-1 and
-Geometry Dash are flashed as standalone apps from the same Manager app list:
+Launcher contains any modules selected in the Manager that fit safely. The games
+with standalone images remain available from the same Manager app list:
 
 | Screen | Gesture | Action |
 |---|---|---|
@@ -357,9 +362,18 @@ Geometry Dash are flashed as standalone apps from the same Manager app list:
 | Mario 1-1 | One short press | Toggle running forward on or off |
 | Mario 1-1 | Two short presses within 260 ms | Step backward two tiles, then resume the prior state |
 | Mario 1-1 | Hold 420 ms | Jump once |
+| Mario 1-1 | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
 | Geometry Dash | Press | Start or jump; a midair press activates a nearby yellow orb |
 | Geometry Dash | Hold | Chain another jump whenever the cube lands |
 | Geometry Dash | Press after crashing | Start the next attempt |
+| Geometry Dash | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
+| Chrome Dino | Press | Start, jump from the ground, or retry after a crash |
+| Chrome Dino | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
+| Tower Stacker | Press | Start, drop the moving floor, or retry after a miss |
+| Tower Stacker | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
+| Doom | One tap / two taps / hold | Turn right / turn left / walk forward |
+| Doom | Pressure (puff) sensor draw | Fire with bounded Normal coil output |
+| Doom | Hold about 2 seconds, then release | Return to Launcher menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Triple-tap | Return to menu |
 | Flappy | Hold about 2 seconds, then release | Return to menu |
@@ -385,7 +399,7 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 | `Access is denied` for `COM7` | Close PlatformIO Monitor, the serial bridge, and any other serial program. |
 | `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
 | `ERR MODE_RUNTIME` | Use **Enable SWD programmer** (or `--esp32-programmer`), reset the N32 while holding its button, then retry. |
-| `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
+| `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
 | `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain both series resistors (1 kΩ for the combined POC), charge the device, and rerun the read-only probe before retrying. |
 | Screen does not return immediately after `DONE` | Verify the latest ESP32 firmware was uploaded, then power-cycle/reset the target before attempting another flash. |
 

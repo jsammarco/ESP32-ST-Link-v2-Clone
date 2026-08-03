@@ -11,3 +11,9 @@ RAZ Vape Apps/Mario/build/*
 RAZ Vape Apps/GeometryDash/build/*
 !RAZ Vape Apps/GeometryDash/build/geometry-dash.bin
 !RAZ Vape Apps/GeometryDash/build/geometry-dash-stream.bin
+RAZ Vape Apps/ChromeDino/build/*
+!RAZ Vape Apps/ChromeDino/build/chrome-dino.bin
+!RAZ Vape Apps/ChromeDino/build/chrome-dino-stream.bin
+RAZ Vape Apps/TowerStacker/build/*
+!RAZ Vape Apps/TowerStacker/build/tower-stacker.bin
+!RAZ Vape Apps/TowerStacker/build/tower-stacker-stream.bin

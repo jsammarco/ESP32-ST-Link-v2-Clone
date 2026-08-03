@@ -1,4 +1,4 @@
-/* Configurable one-button launcher for one or two bundled apps.
+/* Configurable one-button launcher for one or more bundled apps.
  *
  * Menu:     tap changes selection; hold 650 ms, then release, starts it.
  * Games:    hold 2 s, then release, returns to menu.
@@ -29,6 +29,31 @@
 void flappy_module_init(void);
 void flappy_module_update(uint32_t frame);
 void flappy_module_wake(void);
+#endif
+#if LAUNCHER_HAS_MARIO
+void mario_module_init(void);
+void mario_module_update(uint32_t frame);
+void mario_module_wake(void);
+#endif
+#if LAUNCHER_HAS_GEOMETRY_DASH
+void geometry_dash_module_init(void);
+void geometry_dash_module_update(uint32_t frame);
+void geometry_dash_module_wake(void);
+#endif
+#if LAUNCHER_HAS_CHROME_DINO
+void chrome_dino_module_init(void);
+void chrome_dino_module_update(uint32_t frame);
+void chrome_dino_module_wake(void);
+#endif
+#if LAUNCHER_HAS_TOWER_STACKER
+void tower_stacker_module_init(void);
+void tower_stacker_module_update(uint32_t frame);
+void tower_stacker_module_wake(void);
+#endif
+#if LAUNCHER_HAS_DOOM
+void doom_module_init(void);
+void doom_module_update(uint32_t frame);
+void doom_module_wake(void);
 #endif
 
 #define MENU_START_HOLD_MS  650u
@@ -80,9 +105,15 @@ void flappy_module_wake(void);
 
 typedef enum {
     APP_MENU = 0,
-    APP_SLOT_1,
-    APP_SLOT_2,
+    APP_MODULE,
 } active_app_t;
+
+#define MENU_VISIBLE_CARDS 3u
+#define MENU_CARD_H       20u
+#define MENU_CARD_PITCH   21u
+
+static const uint8_t g_slot_kinds[LAUNCHER_SLOT_COUNT] = LAUNCHER_SLOT_KINDS;
+static const char g_slot_labels[LAUNCHER_SLOT_COUNT][16] = LAUNCHER_SLOT_LABELS;
 
 /* 5x7, column-major glyphs for the launcher menu. */
 static const uint8_t g_font[26][5] = {
@@ -111,9 +142,11 @@ static const uint8_t g_digits[10][5] = {
 
 static const uint8_t g_percent[5] = {0x63, 0x13, 0x08, 0x64, 0x63};
 static const uint8_t g_dot[5] = {0x00, 0x00, 0x60, 0x60, 0x00};
+static const uint8_t g_dash[5] = {0x08, 0x08, 0x08, 0x08, 0x08};
 
 static active_app_t g_active_app;
 static uint8_t g_menu_choice;
+static uint8_t g_active_module_index;
 static uint8_t g_menu_start_armed;
 static uint8_t g_game_exit_armed;
 static uint16_t g_battery_raw;
@@ -126,6 +159,30 @@ static uint8_t g_battery_low;
 static uint8_t g_battery_low_samples;
 static uint8_t g_battery_recover_samples;
 static uint8_t g_battery_display_percent;
+#if LAUNCHER_HAS_DOOM
+static uint8_t g_doom_coil_paused;
+#endif
+
+#if LAUNCHER_HAS_DOOM
+/* Doom alternates its raw coil calls for 50% frame-duty output.  Route those
+ * calls through the Launcher's accounting without committing NV on every PWM
+ * pause: a second consecutive OFF means the draw actually ended. */
+void doom_launcher_coil_on(void)
+{
+    g_doom_coil_paused = 0u;
+    vape_level_coil_on();
+}
+
+void doom_launcher_coil_off(void)
+{
+    if (g_doom_coil_paused) {
+        vape_level_coil_off();
+    } else {
+        vape_level_coil_pause();
+        g_doom_coil_paused = 1u;
+    }
+}
+#endif
 
 typedef struct {
     uint16_t raw;
@@ -160,6 +217,8 @@ static void draw_char(uint16_t x, uint16_t y, char character, uint16_t colour)
             glyph = g_percent;
         } else if (character == '.') {
             glyph = g_dot;
+        } else if (character == '-') {
+            glyph = g_dash;
         } else {
             return;
         }
@@ -603,7 +662,7 @@ static uint8_t battery_update(uint16_t now)
 
 static uint16_t card_background(uint8_t card)
 {
-    return (card == 0u) ? COL_RGB(14, 28, 65) : COL_RGB(40, 18, 58);
+    return ((card & 1u) == 0u) ? COL_RGB(14, 28, 65) : COL_RGB(40, 18, 58);
 }
 
 static void draw_card_selection(uint16_t y, uint8_t card, uint8_t selected)
@@ -613,19 +672,60 @@ static void draw_card_selection(uint16_t y, uint8_t card, uint8_t selected)
 
     /* This is intentionally tiny: it redraws in a few short rectangles when
      * switching choices rather than repainting the entire launcher screen. */
-    display_fill_rect(8u, y, 112u, 2u, edge);
-    display_fill_rect(8u, (uint16_t)(y + 28u), 112u, 2u, edge);
-    display_fill_rect(8u, y, 2u, 30u, edge);
-    display_fill_rect(118u, y, 2u, 30u, edge);
-    display_fill_rect(12u, (uint16_t)(y + 5u), 3u, 20u, side);
+    display_fill_rect(8u, y, 112u, 1u, edge);
+    display_fill_rect(8u, (uint16_t)(y + MENU_CARD_H - 1u), 112u, 1u, edge);
+    display_fill_rect(8u, y, 1u, MENU_CARD_H, edge);
+    display_fill_rect(119u, y, 1u, MENU_CARD_H, edge);
+    display_fill_rect(11u, (uint16_t)(y + 4u), 2u, 12u, side);
 }
 
 static void draw_card(uint16_t y, uint8_t card, const char *label)
 {
     const uint16_t background = card_background(card);
 
-    display_fill_rect(8u, y, 112u, 30u, background);
-    draw_centered((uint16_t)(y + 12u), label, COL_WHITE);
+    display_fill_rect(8u, y, 112u, MENU_CARD_H, background);
+    draw_centered((uint16_t)(y + 7u), label, COL_WHITE);
+}
+
+static uint8_t menu_first_visible(void)
+{
+#if LAUNCHER_SLOT_COUNT <= MENU_VISIBLE_CARDS
+    return 0u;
+#else
+    if (g_menu_choice <= 1u) return 0u;
+    if (g_menu_choice >= (uint8_t)(LAUNCHER_SLOT_COUNT - 2u)) {
+        return (uint8_t)(LAUNCHER_SLOT_COUNT - MENU_VISIBLE_CARDS);
+    }
+    return (uint8_t)(g_menu_choice - 1u);
+#endif
+}
+
+static void draw_app_list(void)
+{
+    uint8_t first = menu_first_visible();
+    uint8_t visible = (uint8_t)(LAUNCHER_SLOT_COUNT - first);
+    uint8_t row;
+    uint16_t start_y;
+
+    if (visible > MENU_VISIBLE_CARDS) visible = MENU_VISIBLE_CARDS;
+    start_y = visible == 1u ? 96u : (visible == 2u ? 85u : 75u);
+    display_fill_rect(0u, 74u, LCD_WIDTH, 66u, COL_RGB(8, 10, 31));
+    for (row = 0u; row < visible; row++) {
+        uint8_t slot = (uint8_t)(first + row);
+        uint16_t y = (uint16_t)(start_y + (uint16_t)row * MENU_CARD_PITCH);
+        draw_card(y, slot, g_slot_labels[slot]);
+        draw_card_selection(y, slot, (uint8_t)(slot == g_menu_choice));
+    }
+
+#if LAUNCHER_SLOT_COUNT > MENU_VISIBLE_CARDS
+    /* A narrow position rail makes long bundles readable without stealing
+     * horizontal room from app names. */
+    display_fill_rect(123u, 77u, 2u, 59u, COL_RGB(36, 45, 82));
+    display_fill_rect(123u,
+                      (uint16_t)(77u + ((uint16_t)g_menu_choice * 53u /
+                                       (LAUNCHER_SLOT_COUNT - 1u))),
+                      2u, 6u, COL_CYAN);
+#endif
 }
 
 static void draw_menu(void)
@@ -648,15 +748,7 @@ static void draw_menu(void)
         return;
     }
     draw_centered(65u, "SELECT APP", COL_RGB(165, 175, 235));
-#if LAUNCHER_SLOT_COUNT == 1u
-    draw_card(92u, 0u, LAUNCHER_SLOT_1_LABEL);
-    draw_card_selection(92u, 0u, 1u);
-#else
-    draw_card(76u, 0u, LAUNCHER_SLOT_1_LABEL);
-    draw_card(109u, 1u, LAUNCHER_SLOT_2_LABEL);
-    draw_card_selection(76u, 0u, (uint8_t)(g_menu_choice == 0u));
-    draw_card_selection(109u, 1u, (uint8_t)(g_menu_choice == 1u));
-#endif
+    draw_app_list();
 
     display_fill_rect(0u, 141u, LCD_WIDTH, 19u, COL_RGB(15, 12, 42));
     draw_centered(143u, "TAP CYCLES", COL_RGB(140, 145, 190));
@@ -683,18 +775,15 @@ static uint8_t update_menu(void)
         return (uint8_t)(g_menu_choice + 1u);
     }
 
-#if LAUNCHER_SLOT_COUNT == 2u
-    g_menu_choice ^= 1u;
-    draw_card_selection(76u, 0u, (uint8_t)(g_menu_choice == 0u));
-    draw_card_selection(109u, 1u, (uint8_t)(g_menu_choice == 1u));
-#endif
+    g_menu_choice++;
+    if (g_menu_choice >= LAUNCHER_SLOT_COUNT) g_menu_choice = 0u;
+    draw_app_list();
     return 0u;
 }
 
 static uint8_t active_module_kind(void)
 {
-    return (g_active_app == APP_SLOT_2)
-        ? LAUNCHER_SLOT_2_KIND : LAUNCHER_SLOT_1_KIND;
+    return g_slot_kinds[g_active_module_index];
 }
 
 static void module_init(uint8_t kind)
@@ -718,6 +807,32 @@ static void module_init(uint8_t kind)
 #if LAUNCHER_HAS_SLIDESHOW
     case LAUNCHER_MODULE_SLIDESHOW:
         slideshow_init();
+        break;
+#endif
+#if LAUNCHER_HAS_MARIO
+    case LAUNCHER_MODULE_MARIO:
+        mario_module_init();
+        break;
+#endif
+#if LAUNCHER_HAS_GEOMETRY_DASH
+    case LAUNCHER_MODULE_GEOMETRY_DASH:
+        geometry_dash_module_init();
+        break;
+#endif
+#if LAUNCHER_HAS_CHROME_DINO
+    case LAUNCHER_MODULE_CHROME_DINO:
+        chrome_dino_module_init();
+        break;
+#endif
+#if LAUNCHER_HAS_TOWER_STACKER
+    case LAUNCHER_MODULE_TOWER_STACKER:
+        tower_stacker_module_init();
+        break;
+#endif
+#if LAUNCHER_HAS_DOOM
+    case LAUNCHER_MODULE_DOOM:
+        g_doom_coil_paused = 0u;
+        doom_module_init();
         break;
 #endif
     default:
@@ -748,6 +863,31 @@ static uint8_t module_update(uint8_t kind, uint32_t frame)
     case LAUNCHER_MODULE_SLIDESHOW:
         return slideshow_update(frame);
 #endif
+#if LAUNCHER_HAS_MARIO
+    case LAUNCHER_MODULE_MARIO:
+        mario_module_update(frame);
+        break;
+#endif
+#if LAUNCHER_HAS_GEOMETRY_DASH
+    case LAUNCHER_MODULE_GEOMETRY_DASH:
+        geometry_dash_module_update(frame);
+        break;
+#endif
+#if LAUNCHER_HAS_CHROME_DINO
+    case LAUNCHER_MODULE_CHROME_DINO:
+        chrome_dino_module_update(frame);
+        break;
+#endif
+#if LAUNCHER_HAS_TOWER_STACKER
+    case LAUNCHER_MODULE_TOWER_STACKER:
+        tower_stacker_module_update(frame);
+        break;
+#endif
+#if LAUNCHER_HAS_DOOM
+    case LAUNCHER_MODULE_DOOM:
+        doom_module_update(frame);
+        break;
+#endif
     default:
         break;
     }
@@ -777,6 +917,31 @@ static void module_wake(uint8_t kind)
         slideshow_wake();
         break;
 #endif
+#if LAUNCHER_HAS_MARIO
+    case LAUNCHER_MODULE_MARIO:
+        mario_module_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_GEOMETRY_DASH
+    case LAUNCHER_MODULE_GEOMETRY_DASH:
+        geometry_dash_module_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_CHROME_DINO
+    case LAUNCHER_MODULE_CHROME_DINO:
+        chrome_dino_module_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_TOWER_STACKER
+    case LAUNCHER_MODULE_TOWER_STACKER:
+        tower_stacker_module_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_DOOM
+    case LAUNCHER_MODULE_DOOM:
+        doom_module_wake();
+        break;
+#endif
     default:
         break;
     }
@@ -790,6 +955,9 @@ static uint8_t module_uses_hold_exit(uint8_t kind)
 static void enter_menu(void)
 {
     vape_level_coil_off();
+    /* Doom can put the controller into LCD sleep without sleeping the MCU.
+     * Always wake the panel before drawing the shared Launcher menu. */
+    display_sleep_out();
     g_active_app = APP_MENU;
     g_menu_start_armed = 0u;
     g_game_exit_armed = 0u;
@@ -798,10 +966,11 @@ static void enter_menu(void)
     draw_menu();
 }
 
-static void enter_slot(active_app_t slot)
+static void enter_slot(uint8_t slot)
 {
     vape_level_coil_off();
-    g_active_app = slot;
+    g_active_app = APP_MODULE;
+    g_active_module_index = slot;
     g_game_exit_armed = 0u;
     app_set_sleep_timeout(MENU_SLEEP_MS);
     app_set_hold_reset(0u, (void (*)(void))0);
@@ -811,6 +980,7 @@ static void enter_slot(active_app_t slot)
 void app_init(void)
 {
     g_menu_choice = 0u;
+    g_active_module_index = 0u;
     vape_level_init();
     battery_init();
     enter_menu();
@@ -838,16 +1008,11 @@ void app_update(uint32_t frame)
     case APP_MENU:
         {
             const uint8_t launch = update_menu();
-            if (launch == 1u) {
-                enter_slot(APP_SLOT_1);
-            } else if (launch == 2u) {
-                enter_slot(APP_SLOT_2);
-            }
+            if (launch) enter_slot((uint8_t)(launch - 1u));
         }
         break;
 
-    case APP_SLOT_1:
-    case APP_SLOT_2:
+    case APP_MODULE:
         {
             const uint8_t kind = active_module_kind();
             if (g_game_exit_armed) {
@@ -879,7 +1044,7 @@ void app_wake(void)
     battery_init();
     if (g_battery_low) {
         enter_menu();
-    } else if (g_active_app == APP_SLOT_1 || g_active_app == APP_SLOT_2) {
+    } else if (g_active_app == APP_MODULE) {
         module_wake(active_module_kind());
     } else {
         draw_menu();

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Launcher with one or two selected apps and optional Slideshow photos.
+"""Build Launcher with selected apps and optional Slideshow photos.
 
 Selected photo originals are staged only in a temporary directory. The normal
 photo header is restored afterward, so a custom build does not replace the
@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from build_slideshow_with_photos import find_vaporware_sdk, validate_photos
+from launcher_storage import APP_SAFE_BYTES, BUNDLE_APPS, FLASH_TOTAL_BYTES, SETTINGS_RESERVED_BYTES
 
 
 REPO_ROOT = Path(os.environ.get("RAZ_REPO_ROOT", Path(__file__).resolve().parent.parent)).resolve()
@@ -24,9 +25,6 @@ LAUNCHER_DIR = REPO_ROOT / "RAZ Vape Apps" / "Launcher"
 BUILD_SCRIPT = LAUNCHER_DIR / "build_launcher.bat"
 CUSTOM_APP_NAME = "launcher-custom"
 GENERATED_HEADER = LAUNCHER_DIR / "generated" / "photos.h"
-BUNDLE_APPS = ("Tetris", "Pac-Man", "Flappy", "Slideshow")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apps", nargs="+", required=True, choices=BUNDLE_APPS, metavar="APP")
@@ -36,8 +34,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_apps(apps: list[str]) -> list[str]:
-    if not 1 <= len(apps) <= 2:
-        raise RuntimeError("Choose one or two apps for Launcher.")
+    if not 1 <= len(apps) <= len(BUNDLE_APPS):
+        raise RuntimeError(f"Choose from one to {len(BUNDLE_APPS)} apps for Launcher.")
     if len(set(apps)) != len(apps):
         raise RuntimeError("Choose each Launcher app only once.")
     return apps
@@ -67,8 +65,7 @@ def main() -> int:
             environment = os.environ.copy()
             environment["VAPORWARE"] = str(sdk)
             environment["LAUNCHER_APP_NAME"] = output_name
-            environment["LAUNCHER_APP_1"] = apps[0]
-            environment["LAUNCHER_APP_2"] = apps[1] if len(apps) == 2 else "None"
+            environment["LAUNCHER_APPS"] = " ".join(f'"{app}"' for app in apps)
             if args.screen_stream:
                 environment["SCREEN_STREAMER"] = "1"
             if photos:
@@ -93,11 +90,16 @@ def main() -> int:
 
     if not custom_image.is_file():
         raise RuntimeError(f"Build completed without producing {custom_image}")
-    if custom_image.stat().st_size > 60 * 1024:
+    image_bytes = custom_image.stat().st_size
+    print(
+        f"FLASH_USAGE {image_bytes} {APP_SAFE_BYTES} {FLASH_TOTAL_BYTES} "
+        f"(settings reserve {SETTINGS_RESERVED_BYTES} bytes)"
+    )
+    if image_bytes > APP_SAFE_BYTES:
         raise RuntimeError(
-            f"Launcher image is {custom_image.stat().st_size:,} bytes; safe limit is 61,440 bytes."
+            f"Launcher image is {image_bytes:,} bytes; safe app limit is {APP_SAFE_BYTES:,} bytes."
         )
-    print(f"Built {custom_image} ({custom_image.stat().st_size:,} bytes).")
+    print(f"Built {custom_image} ({image_bytes:,} bytes).")
     return 0
 
 

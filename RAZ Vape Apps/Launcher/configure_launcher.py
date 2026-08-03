@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the build-time configuration for one or two Launcher apps."""
+"""Generate the build-time configuration for a variable Launcher app bundle."""
 
 from __future__ import annotations
 
@@ -16,9 +16,18 @@ APP_CONFIG = {
     "tetris": ("Tetris", "LAUNCHER_MODULE_TETRIS", "TETRIS"),
     "pac-man": ("Pac-Man", "LAUNCHER_MODULE_PACMAN", "PAC-MAN"),
     "pacman": ("Pac-Man", "LAUNCHER_MODULE_PACMAN", "PAC-MAN"),
+    "mario 1-1": ("Mario 1-1", "LAUNCHER_MODULE_MARIO", "MARIO 1-1"),
+    "mario": ("Mario 1-1", "LAUNCHER_MODULE_MARIO", "MARIO 1-1"),
+    "geometry dash": ("Geometry Dash", "LAUNCHER_MODULE_GEOMETRY_DASH", "GEOMETRY DASH"),
+    "chrome dino": ("Chrome Dino", "LAUNCHER_MODULE_CHROME_DINO", "CHROME DINO"),
+    "tower stacker": ("Tower Stacker", "LAUNCHER_MODULE_TOWER_STACKER", "TOWER STACKER"),
+    "doom": ("Doom", "LAUNCHER_MODULE_DOOM", "DOOM"),
     "flappy": ("Flappy", "LAUNCHER_MODULE_FLAPPY", "FLAPPY BIRD"),
     "slideshow": ("Slideshow", "LAUNCHER_MODULE_SLIDESHOW", "SLIDESHOW"),
 }
+
+APP_CHOICES = "Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Doom, Flappy, or Slideshow"
+MAX_LAUNCHER_APPS = 9
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,7 +37,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         required=True,
         metavar="APP",
-        help="one or two of: Tetris, Pac-Man, Flappy, Slideshow",
+        help=f"one to {MAX_LAUNCHER_APPS} of: {APP_CHOICES}",
     )
     return parser.parse_args()
 
@@ -36,22 +45,23 @@ def parse_args() -> argparse.Namespace:
 def normalize_apps(values: list[str]) -> list[tuple[str, str, str]]:
     names = [value.strip().lower() for value in values if value.strip() and value.strip().lower() != "none"]
     names = ["pac-man" if name == "pacman" else name for name in names]
-    if not 1 <= len(names) <= 2:
-        raise RuntimeError("Launcher requires one or two bundled apps.")
+    if not 1 <= len(names) <= MAX_LAUNCHER_APPS:
+        raise RuntimeError(f"Launcher requires from one to {MAX_LAUNCHER_APPS} bundled apps.")
     if len(set(names)) != len(names):
         raise RuntimeError("Choose each Launcher app only once.")
     unknown = [name for name in names if name not in APP_CONFIG]
     if unknown:
         raise RuntimeError(
-            f"Unknown Launcher app: {unknown[0]}. Choose Tetris, Pac-Man, Flappy, or Slideshow."
+            f"Unknown Launcher app: {unknown[0]}. Choose {APP_CHOICES}."
         )
     return [APP_CONFIG[name] for name in names]
 
 
 def write_configuration(apps: list[tuple[str, str, str]]) -> None:
     GENERATED_DIR.mkdir(exist_ok=True)
-    slots = [*apps, ("None", "LAUNCHER_MODULE_NONE", "")][:2]
     selected = {app[0] for app in apps}
+    slot_kinds = ", ".join(app[1] for app in apps)
+    slot_labels = ", ".join(f'"{app[2]}"' for app in apps)
 
     header = (
         "#ifndef GENERATED_LAUNCHER_CONFIG_H\n"
@@ -60,16 +70,24 @@ def write_configuration(apps: list[tuple[str, str, str]]) -> None:
         "#define LAUNCHER_MODULE_TETRIS     1u\n"
         "#define LAUNCHER_MODULE_FLAPPY     2u\n"
         "#define LAUNCHER_MODULE_SLIDESHOW  3u\n"
-        "#define LAUNCHER_MODULE_PACMAN     4u\n\n"
+        "#define LAUNCHER_MODULE_PACMAN     4u\n"
+        "#define LAUNCHER_MODULE_MARIO      5u\n"
+        "#define LAUNCHER_MODULE_GEOMETRY_DASH 6u\n"
+        "#define LAUNCHER_MODULE_CHROME_DINO 7u\n"
+        "#define LAUNCHER_MODULE_DOOM       8u\n"
+        "#define LAUNCHER_MODULE_TOWER_STACKER 9u\n\n"
         f"#define LAUNCHER_SLOT_COUNT {len(apps)}u\n"
-        f"#define LAUNCHER_SLOT_1_KIND {slots[0][1]}\n"
-        f"#define LAUNCHER_SLOT_1_LABEL \"{slots[0][2]}\"\n"
-        f"#define LAUNCHER_SLOT_2_KIND {slots[1][1]}\n"
-        f"#define LAUNCHER_SLOT_2_LABEL \"{slots[1][2]}\"\n\n"
+        f"#define LAUNCHER_SLOT_KINDS {{ {slot_kinds} }}\n"
+        f"#define LAUNCHER_SLOT_LABELS {{ {slot_labels} }}\n\n"
         f"#define LAUNCHER_HAS_TETRIS {int('Tetris' in selected)}\n"
         f"#define LAUNCHER_HAS_PACMAN {int('Pac-Man' in selected)}\n"
         f"#define LAUNCHER_HAS_FLAPPY {int('Flappy' in selected)}\n"
-        f"#define LAUNCHER_HAS_SLIDESHOW {int('Slideshow' in selected)}\n\n"
+        f"#define LAUNCHER_HAS_SLIDESHOW {int('Slideshow' in selected)}\n"
+        f"#define LAUNCHER_HAS_MARIO {int('Mario 1-1' in selected)}\n"
+        f"#define LAUNCHER_HAS_GEOMETRY_DASH {int('Geometry Dash' in selected)}\n"
+        f"#define LAUNCHER_HAS_CHROME_DINO {int('Chrome Dino' in selected)}\n"
+        f"#define LAUNCHER_HAS_TOWER_STACKER {int('Tower Stacker' in selected)}\n"
+        f"#define LAUNCHER_HAS_DOOM {int('Doom' in selected)}\n\n"
         "#endif /* GENERATED_LAUNCHER_CONFIG_H */\n"
     )
     HEADER_PATH.write_text(header, encoding="ascii", newline="\n")
@@ -80,6 +98,11 @@ def write_configuration(apps: list[tuple[str, str, str]]) -> None:
         f"set LAUNCHER_BUILD_PACMAN={int('Pac-Man' in selected)}\n"
         f"set LAUNCHER_BUILD_FLAPPY={int('Flappy' in selected)}\n"
         f"set LAUNCHER_BUILD_SLIDESHOW={int('Slideshow' in selected)}\n"
+        f"set LAUNCHER_BUILD_MARIO={int('Mario 1-1' in selected)}\n"
+        f"set LAUNCHER_BUILD_GEOMETRY_DASH={int('Geometry Dash' in selected)}\n"
+        f"set LAUNCHER_BUILD_CHROME_DINO={int('Chrome Dino' in selected)}\n"
+        f"set LAUNCHER_BUILD_TOWER_STACKER={int('Tower Stacker' in selected)}\n"
+        f"set LAUNCHER_BUILD_DOOM={int('Doom' in selected)}\n"
     )
     BATCH_PATH.write_text(batch, encoding="ascii", newline="\r\n")
 

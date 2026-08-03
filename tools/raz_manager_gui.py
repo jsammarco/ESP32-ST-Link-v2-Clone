@@ -20,6 +20,18 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+from launcher_storage import (
+    APP_SAFE_BYTES,
+    BUNDLE_APPS as LAUNCHER_BUNDLE_APPS,
+    FLASH_TOTAL_BYTES,
+    PHOTO_ASSET_BYTES,
+    SETTINGS_RESERVED_BYTES,
+    SLIDESHOW_COMMON_ESTIMATE_BYTES,
+    STREAMER_ESTIMATE_BYTES,
+    projected_launcher_bytes,
+    selected_image_bytes,
+)
+
 try:
     from serial.tools import list_ports
 except ModuleNotFoundError:
@@ -45,8 +57,9 @@ LAUNCHER_BUILD_TOOL = Path(__file__).resolve().with_name("build_launcher_with_ph
 STREAM_BUILD_TOOL = Path(__file__).resolve().with_name("build_streamable_app.py")
 SCREEN_STREAMER_TOOL = Path(__file__).resolve().with_name("raz_screen_streamer.py")
 BACKUP_ROOT = REPO_ROOT / "backups"
-FULL_FLASH_BYTES = 64 * 1024
+FULL_FLASH_BYTES = FLASH_TOTAL_BYTES
 NV_LINE = re.compile(r"^NV\s+(\d+)\s+(NONE|[0-9A-Fa-f]{8})$")
+FLASH_USAGE_LINE = re.compile(r"^FLASH_USAGE\s+(\d+)\s+(\d+)\s+(\d+)")
 
 APPS = {
     "Launcher": REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher.bin",
@@ -54,6 +67,8 @@ APPS = {
     "Pac-Man": REPO_ROOT / "RAZ Vape Apps" / "Pacman" / "build" / "pacman.bin",
     "Mario 1-1": REPO_ROOT / "RAZ Vape Apps" / "Mario" / "build" / "mario.bin",
     "Geometry Dash": REPO_ROOT / "RAZ Vape Apps" / "GeometryDash" / "build" / "geometry-dash.bin",
+    "Chrome Dino": REPO_ROOT / "RAZ Vape Apps" / "ChromeDino" / "build" / "chrome-dino.bin",
+    "Tower Stacker": REPO_ROOT / "RAZ Vape Apps" / "TowerStacker" / "build" / "tower-stacker.bin",
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy.bin",
 }
@@ -66,12 +81,11 @@ STREAM_IMAGES = {
     "Pac-Man": REPO_ROOT / "RAZ Vape Apps" / "Pacman" / "build" / "pacman-stream.bin",
     "Mario 1-1": REPO_ROOT / "RAZ Vape Apps" / "Mario" / "build" / "mario-stream.bin",
     "Geometry Dash": REPO_ROOT / "RAZ Vape Apps" / "GeometryDash" / "build" / "geometry-dash-stream.bin",
+    "Chrome Dino": REPO_ROOT / "RAZ Vape Apps" / "ChromeDino" / "build" / "chrome-dino-stream.bin",
+    "Tower Stacker": REPO_ROOT / "RAZ Vape Apps" / "TowerStacker" / "build" / "tower-stacker-stream.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy-stream.bin",
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-stream.bin",
 }
-LAUNCHER_BUNDLE_APPS = ("Tetris", "Pac-Man", "Flappy", "Slideshow")
-NO_SECOND_APP = "None"
-
 NV_LABELS = {
     0: "Puff count",
     1: "Total vape time",
@@ -135,10 +149,16 @@ class RazManager(tk.Tk):
         self.screen_stream_var = tk.BooleanVar(value=False)
         self.launcher_level_var = tk.StringVar(value="Preserve saved value")
         self.coil_profile_var = tk.StringVar(value="Current app default")
-        self.launcher_app_1_var = tk.StringVar(value="Tetris")
-        self.launcher_app_2_var = tk.StringVar(value="Flappy")
+        self.launcher_app_vars = {
+            app: tk.BooleanVar(value=app in {"Tetris", "Flappy"})
+            for app in LAUNCHER_BUNDLE_APPS
+        }
+        self.launcher_app_checks: dict[str, ttk.Checkbutton] = {}
         self.custom_image_path: Path | None = None
         self.custom_image_var = tk.StringVar(value="Launcher will be built with Tetris + Flappy.")
+        self.storage_detail_var = tk.StringVar()
+        self.storage_over_limit = False
+        self.built_storage_bytes: int | None = None
         self.slideshow_photos: list[Path] = []
         self.slideshow_photo_var = tk.StringVar(
             value="No custom embedded Slideshow photos selected — the bundled app image will be used."
@@ -148,6 +168,7 @@ class RazManager(tk.Tk):
         self.action_widgets: list[tk.Widget] = []
 
         self._build_ui()
+        self.update_storage_bar()
         self.refresh_ports()
         self.after(75, self._drain_events)
 
@@ -260,71 +281,82 @@ class RazManager(tk.Tk):
             row=4, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
         )
 
-        ttk.Label(write_frame, text="Launcher bundle:").grid(row=5, column=0, sticky="w", pady=(10, 0))
-        self.launcher_app_1_box = ttk.Combobox(
-            write_frame,
-            textvariable=self.launcher_app_1_var,
-            values=LAUNCHER_BUNDLE_APPS,
-            state="readonly",
-            width=14,
-        )
-        self.launcher_app_1_box.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
-        self.launcher_app_1_box.bind("<<ComboboxSelected>>", self.on_launcher_bundle_changed)
+        ttk.Label(write_frame, text="Launcher bundle:").grid(row=5, column=0, sticky="nw", pady=(12, 0))
+        launcher_bundle_frame = ttk.Frame(write_frame)
+        launcher_bundle_frame.grid(row=5, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        for index, app in enumerate(LAUNCHER_BUNDLE_APPS):
+            check = ttk.Checkbutton(
+                launcher_bundle_frame,
+                text=app,
+                variable=self.launcher_app_vars[app],
+                command=self.on_launcher_bundle_changed,
+            )
+            check.grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 18), pady=2)
+            self.launcher_app_checks[app] = check
+            self.action_widgets.append(check)
 
-        ttk.Label(write_frame, text="+", font=("Segoe UI", 11, "bold")).grid(
-            row=5, column=2, sticky="e", padx=(8, 0), pady=(10, 0)
+        ttk.Label(write_frame, text="Flash storage:").grid(row=6, column=0, sticky="nw", pady=(12, 0))
+        storage_frame = ttk.Frame(write_frame)
+        storage_frame.grid(row=6, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(10, 0))
+        storage_frame.columnconfigure(0, weight=1)
+        self.storage_canvas = tk.Canvas(
+            storage_frame,
+            height=24,
+            width=560,
+            highlightthickness=1,
+            highlightbackground="#8993a4",
+            bg="#e8edf3",
         )
-        self.launcher_app_2_box = ttk.Combobox(
-            write_frame,
-            textvariable=self.launcher_app_2_var,
-            values=(*LAUNCHER_BUNDLE_APPS, NO_SECOND_APP),
-            state="readonly",
-            width=14,
-        )
-        self.launcher_app_2_box.grid(row=5, column=3, sticky="w", padx=(6, 0), pady=(10, 0))
-        self.launcher_app_2_box.bind("<<ComboboxSelected>>", self.on_launcher_bundle_changed)
-        self.action_widgets.extend([self.launcher_app_1_box, self.launcher_app_2_box])
+        self.storage_canvas.grid(row=0, column=0, sticky="ew")
+        self.storage_canvas.bind("<Configure>", lambda _event: self.update_storage_bar())
+        ttk.Label(
+            storage_frame,
+            textvariable=self.storage_detail_var,
+            foreground="#444444",
+            wraplength=610,
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
 
-        ttk.Label(write_frame, text="Embedded photos:").grid(row=6, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(write_frame, text="Embedded photos:").grid(row=7, column=0, sticky="w", pady=(10, 0))
         self.choose_slideshow_photos_button = ttk.Button(
             write_frame,
             text="Choose up to 3 photos...",
             command=self.choose_slideshow_photos,
         )
-        self.choose_slideshow_photos_button.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.choose_slideshow_photos_button.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
         self.clear_slideshow_photos_button = ttk.Button(
             write_frame,
             text="Clear photos",
             command=self.clear_slideshow_photos,
         )
-        self.clear_slideshow_photos_button.grid(row=6, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.clear_slideshow_photos_button.grid(row=7, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.extend([self.choose_slideshow_photos_button, self.clear_slideshow_photos_button])
         ttk.Label(write_frame, textvariable=self.slideshow_photo_var, foreground="#444444", wraplength=610).grid(
-            row=7, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
+            row=8, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
         )
         backup_before_flash = ttk.Checkbutton(
             write_frame,
             text="Create a backup before flashing",
             variable=self.backup_before_flash_var,
         )
-        backup_before_flash.grid(row=8, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        backup_before_flash.grid(row=9, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.append(backup_before_flash)
 
         self.screen_stream_check = ttk.Checkbutton(
             write_frame,
             text="Add full-resolution SWD screen streamer (128×160)",
             variable=self.screen_stream_var,
+            command=self.on_storage_option_changed,
         )
-        self.screen_stream_check.grid(row=9, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.screen_stream_check.grid(row=10, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(6, 0))
         self.open_stream_button = ttk.Button(
             write_frame,
             text="Open screen viewer",
             command=self.open_screen_viewer,
         )
-        self.open_stream_button.grid(row=9, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.open_stream_button.grid(row=10, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.screen_stream_check, self.open_stream_button])
 
-        ttk.Label(write_frame, text="Launcher level:").grid(row=10, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(write_frame, text="Launcher level:").grid(row=11, column=0, sticky="w", pady=(10, 0))
         self.launcher_level_box = ttk.Combobox(
             write_frame,
             textvariable=self.launcher_level_var,
@@ -332,9 +364,9 @@ class RazManager(tk.Tk):
             state="readonly",
             width=25,
         )
-        self.launcher_level_box.grid(row=10, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.launcher_level_box.grid(row=11, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
 
-        ttk.Label(write_frame, text="Coil profile:").grid(row=11, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(write_frame, text="Coil profile:").grid(row=12, column=0, sticky="w", pady=(6, 0))
         self.coil_profile_box = ttk.Combobox(
             write_frame,
             textvariable=self.coil_profile_var,
@@ -342,7 +374,7 @@ class RazManager(tk.Tk):
             state="readonly",
             width=29,
         )
-        self.coil_profile_box.grid(row=11, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.coil_profile_box.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.launcher_level_box, self.coil_profile_box])
         ttk.Label(
             write_frame,
@@ -350,13 +382,13 @@ class RazManager(tk.Tk):
                   "the battery or consumable. No profile increases the current app's output or cutoff."),
             foreground="#444444",
             wraplength=650,
-        ).grid(row=12, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
+        ).grid(row=13, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
         ttk.Label(
             write_frame,
             text="Always create a backup before flashing or restoring. Restore overwrites all internal flash and saved settings.",
             foreground="#7a3000",
             wraplength=650,
-        ).grid(row=13, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ).grid(row=14, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         values_frame = ttk.LabelFrame(main, text="Saved values", padding=10)
         values_frame.grid(row=6, column=0, columnspan=4, sticky="new", pady=(12, 0))
@@ -398,6 +430,7 @@ class RazManager(tk.Tk):
         self.status_var.set("Ports refreshed. COM1 is excluded; select the ESP32 DevKit COM port.")
 
     def on_app_selected(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        self.built_storage_bytes = None
         selection = self.app_var.get()
         if selection == CUSTOM_APP:
             self.screen_stream_var.set(False)
@@ -408,30 +441,126 @@ class RazManager(tk.Tk):
             self.custom_image_var.set(f"Bundled image: {APPS[selection]}")
         self.update_launcher_options()
         self.update_slideshow_photo_options()
+        self.update_storage_bar()
 
     def selected_launcher_apps(self) -> list[str]:
-        apps = [self.launcher_app_1_var.get()]
-        if self.launcher_app_2_var.get() != NO_SECOND_APP:
-            apps.append(self.launcher_app_2_var.get())
-        return apps
+        return [app for app in LAUNCHER_BUNDLE_APPS if self.launcher_app_vars[app].get()]
+
+    def bundled_slideshow_photo_count(self) -> int:
+        if self.slideshow_photos:
+            return len(self.slideshow_photos)
+        header = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "generated" / "photos.h"
+        try:
+            match = re.search(r"#define\s+SLIDESHOW_IMAGE_COUNT\s+(\d+)u?", header.read_text(encoding="ascii"))
+        except OSError:
+            return 0
+        return int(match.group(1)) if match else 0
+
+    def current_storage_usage(self) -> tuple[int, bool, str]:
+        selection = self.app_var.get()
+        screen_stream = self.screen_stream_var.get() and selection != CUSTOM_APP
+        if selection == CUSTOM_APP:
+            if self.custom_image_path is None or not self.custom_image_path.is_file():
+                return 0, False, "Choose a custom image to measure it"
+            return self.custom_image_path.stat().st_size, True, "Exact custom image"
+        if selection == "Launcher":
+            apps = self.selected_launcher_apps()
+            if not apps:
+                return 0, False, "Select at least one Launcher app"
+            if self.built_storage_bytes is not None:
+                return self.built_storage_bytes, True, "Exact linked Launcher image"
+            photo_count = self.bundled_slideshow_photo_count() if "Slideshow" in apps else 0
+            return (
+                projected_launcher_bytes(
+                    apps,
+                    screen_stream=screen_stream,
+                    photo_count=photo_count,
+                ),
+                False,
+                "Projected Launcher build",
+            )
+        if selection == "Slideshow" and self.slideshow_photos:
+            size = SLIDESHOW_COMMON_ESTIMATE_BYTES + len(self.slideshow_photos) * PHOTO_ASSET_BYTES
+            if screen_stream:
+                size += STREAMER_ESTIMATE_BYTES
+            return size, False, "Projected custom Slideshow build"
+        normal = APPS.get(selection)
+        if normal is None:
+            return 0, False, "No image selected"
+        size, exact = selected_image_bytes(normal, STREAM_IMAGES.get(selection), screen_stream)
+        return size, exact, "Exact built image" if exact else "Projected image"
+
+    def update_storage_bar(self) -> None:
+        if not hasattr(self, "storage_canvas"):
+            return
+        used, exact, source = self.current_storage_usage()
+        self.storage_over_limit = used > APP_SAFE_BYTES
+        width = max(self.storage_canvas.winfo_width(), 520)
+        height = 24
+        safe_x = int(width * APP_SAFE_BYTES / FLASH_TOTAL_BYTES)
+        used_x = min(width, int(width * used / FLASH_TOTAL_BYTES)) if used else 0
+        if self.storage_over_limit:
+            fill = "#d64545"
+        elif used >= int(APP_SAFE_BYTES * 0.8):
+            fill = "#e5a72b"
+        else:
+            fill = "#2c9c69"
+
+        self.storage_canvas.delete("all")
+        self.storage_canvas.create_rectangle(0, 0, width, height, fill="#e8edf3", outline="")
+        self.storage_canvas.create_rectangle(safe_x, 0, width, height, fill="#d9c89b", outline="")
+        if used_x:
+            self.storage_canvas.create_rectangle(0, 0, used_x, height, fill=fill, outline="")
+        self.storage_canvas.create_line(safe_x, 0, safe_x, height, fill="#765d20", width=2)
+        status = "OVER SAFE LIMIT" if self.storage_over_limit else f"{used / 1024:.1f} KB used"
+        self.storage_canvas.create_text(
+            width // 2,
+            height // 2,
+            text=status,
+            fill="#ffffff" if used_x > width // 2 or self.storage_over_limit else "#243247",
+            font=("Segoe UI", 9, "bold"),
+        )
+        accuracy = "exact" if exact else "estimate"
+        remaining = APP_SAFE_BYTES - used
+        if remaining >= 0:
+            detail = (
+                f"{source} ({accuracy}): {used:,} of {APP_SAFE_BYTES:,} app bytes; "
+                f"{remaining:,} free. {SETTINGS_RESERVED_BYTES:,} bytes reserved for saved values "
+                f"({FLASH_TOTAL_BYTES:,} total)."
+            )
+        else:
+            detail = (
+                f"{source} ({accuracy}): {used:,} bytes, {abs(remaining):,} over the safe app limit. "
+                "Deselect apps/photos or disable streaming."
+            )
+        self.storage_detail_var.set(detail)
 
     def update_launcher_bundle_summary(self) -> None:
         apps = self.selected_launcher_apps()
-        if len(set(apps)) != len(apps):
-            self.custom_image_var.set("Choose two different Launcher apps.")
+        if not apps:
+            self.custom_image_var.set("Select at least one app for the Launcher bundle.")
         else:
-            self.custom_image_var.set("Launcher will be built with " + " + ".join(apps) + ".")
+            self.custom_image_var.set(
+                f"Launcher will be built with {len(apps)} app(s): " + ", ".join(apps) + "."
+            )
 
     def on_launcher_bundle_changed(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        self.built_storage_bytes = None
         self.update_launcher_bundle_summary()
         self.update_slideshow_photo_options()
+        self.update_storage_bar()
+
+    def on_storage_option_changed(self) -> None:
+        self.built_storage_bytes = None
+        self.update_storage_bar()
 
     def update_launcher_options(self) -> None:
-        state = "readonly" if self.app_var.get() == "Launcher" and self.process is None else "disabled"
-        self.launcher_app_1_box.configure(state=state)
-        self.launcher_app_2_box.configure(state=state)
-        self.launcher_level_box.configure(state=state)
-        self.coil_profile_box.configure(state=state)
+        launcher_state = "normal" if self.app_var.get() == "Launcher" and self.process is None else "disabled"
+        for check in self.launcher_app_checks.values():
+            check.configure(state=launcher_state)
+        combo_state = "readonly" if launcher_state == "normal" else "disabled"
+        self.launcher_level_box.configure(state=combo_state)
+        self.coil_profile_box.configure(state=combo_state)
         stream_state = "normal" if self.app_var.get() != CUSTOM_APP and self.process is None else "disabled"
         self.screen_stream_check.configure(state=stream_state)
 
@@ -496,17 +625,21 @@ class RazManager(tk.Tk):
             messagebox.showerror("Duplicate photo", "Choose each Slideshow photo only once.")
             return
         self.slideshow_photos = photos
+        self.built_storage_bytes = None
         names = ", ".join(path.name for path in photos)
         self.slideshow_photo_var.set(f"{len(photos)} photo(s) selected: {names}")
         target = "Launcher Slideshow slot" if self.app_var.get() == "Launcher" else "Slideshow"
         self.status_var.set(f"Selected photos will be embedded when {target} is flashed.")
+        self.update_storage_bar()
 
     def clear_slideshow_photos(self) -> None:
         self.slideshow_photos.clear()
+        self.built_storage_bytes = None
         self.slideshow_photo_var.set(
             "No custom embedded Slideshow photos selected — the bundled app image will be used."
         )
         self.status_var.set("Custom embedded Slideshow photo selection cleared.")
+        self.update_storage_bar()
 
     def choose_custom_image(self) -> Path | None:
         image = filedialog.askopenfilename(
@@ -519,8 +652,10 @@ class RazManager(tk.Tk):
             self.status_var.set("No custom firmware image selected.")
             return None
         self.custom_image_path = Path(image)
+        self.built_storage_bytes = None
         self.custom_image_var.set(f"Custom image: {self.custom_image_path}")
         self.status_var.set(f"Custom firmware selected: {self.custom_image_path.name}")
+        self.update_storage_bar()
         return self.custom_image_path
 
     def selected_port(self) -> str | None:
@@ -553,6 +688,7 @@ class RazManager(tk.Tk):
         if enabled:
             self.update_launcher_options()
             self.update_slideshow_photo_options()
+            self.update_storage_bar()
 
     def run_tool(self, action: str, arguments: list[str]) -> None:
         port = self.selected_port()
@@ -707,6 +843,10 @@ class RazManager(tk.Tk):
                         key = int(match.group(1))
                         raw_value = match.group(2)
                         self.values[key] = None if raw_value == "NONE" else int(raw_value, 16)
+                    flash_match = FLASH_USAGE_LINE.match(line)
+                    if flash_match:
+                        self.built_storage_bytes = int(flash_match.group(1))
+                        self.update_storage_bar()
                 elif kind == "complete":
                     self._complete_action(int(payload))
         except queue.Empty:
@@ -874,8 +1014,8 @@ class RazManager(tk.Tk):
         launcher_apps: list[str] = []
         if selection == "Launcher":
             launcher_apps = self.selected_launcher_apps()
-            if len(set(launcher_apps)) != len(launcher_apps):
-                messagebox.showerror("Duplicate Launcher app", "Choose two different apps for the Launcher bundle.")
+            if not launcher_apps:
+                messagebox.showerror("Launcher app required", "Select at least one app for the Launcher bundle.")
                 return
         slideshow_selected = selection == "Slideshow" or (
             selection == "Launcher" and "Slideshow" in launcher_apps
@@ -897,6 +1037,15 @@ class RazManager(tk.Tk):
             image_path = STREAM_IMAGES[selection]
         else:
             image_path = APPS[selection]
+        storage_bytes, storage_exact, storage_source = self.current_storage_usage()
+        if storage_bytes > APP_SAFE_BYTES:
+            messagebox.showerror(
+                "Image exceeds safe app storage",
+                f"{storage_source} uses {storage_bytes:,} bytes, which is "
+                f"{storage_bytes - APP_SAFE_BYTES:,} bytes over the {APP_SAFE_BYTES:,}-byte app region.\n\n"
+                "Deselect Launcher apps/photos or disable the screen streamer before flashing.",
+            )
+            return
         building_fresh_image = selection == "Launcher" or building_selected_photos or stream_enabled
         if not image_path.is_file() and not building_fresh_image:
             messagebox.showerror("Image not found", f"Cannot find:\n{image_path}\n\nBuild or copy the app image first.")
@@ -916,7 +1065,11 @@ class RazManager(tk.Tk):
                 command.extend(["--photos", *(str(photo) for photo in self.slideshow_photos)])
             if stream_enabled:
                 command.append("--screen-stream")
-            build_note = f"\nA fresh Launcher containing {' + '.join(launcher_apps)} will be built before flashing.\n"
+            build_note = (
+                f"\nA fresh Launcher containing {len(launcher_apps)} app(s) will be built before flashing:\n"
+                + ", ".join(launcher_apps)
+                + "\n"
+            )
             if building_selected_photos:
                 build_note += f"It will include {len(self.slideshow_photos)} selected Slideshow photo(s).\n"
             if stream_enabled:
@@ -988,6 +1141,11 @@ class RazManager(tk.Tk):
             )
         if stream_enabled:
             config_note += "\nSWD screen streamer: included\n"
+        storage_kind = "Exact" if storage_exact else "Projected"
+        config_note += (
+            f"\n{storage_kind} app storage: {storage_bytes:,} / {APP_SAFE_BYTES:,} bytes "
+            f"({APP_SAFE_BYTES - storage_bytes:,} free; {SETTINGS_RESERVED_BYTES:,} settings bytes reserved)\n"
+        )
         if not messagebox.askyesno(
             "Flash application?",
             f"{backup_note}Flash this image?\n\n{image_path.name}{build_note}{config_note}\n"

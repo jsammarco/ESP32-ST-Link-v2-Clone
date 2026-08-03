@@ -17,6 +17,8 @@ APP_CONFIG = {
     "Pac-Man": ("Pacman", "build_pacman.bat", "PACMAN_APP_NAME", "pacman-stream"),
     "Mario 1-1": ("Mario", "build_mario.bat", "MARIO_APP_NAME", "mario-stream"),
     "Geometry Dash": ("GeometryDash", "build_geometry_dash.bat", "GEOMETRY_DASH_APP_NAME", "geometry-dash-stream"),
+    "Chrome Dino": ("ChromeDino", "build_chrome_dino.bat", "CHROME_DINO_APP_NAME", "chrome-dino-stream"),
+    "Tower Stacker": ("TowerStacker", "build_tower_stacker.bat", "TOWER_STACKER_APP_NAME", "tower-stacker-stream"),
     "Flappy": ("flappy", "build_flappy.bat", "FLAPPY_APP_NAME", "flappy-stream"),
     "Slideshow": ("Slideshow", "build_slideshow.bat", "SLIDESHOW_APP_NAME", "slideshow-stream"),
 }

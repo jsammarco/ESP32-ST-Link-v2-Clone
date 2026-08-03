@@ -13,8 +13,12 @@ set OBJCOPY="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bi
 set SIZE="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-size.exe"
 if not defined VAPORWARE for %%I in ("%~dp0..\..\..\Vaporware\src") do set "VAPORWARE=%%~fI"
 
-if not defined LAUNCHER_APP_1 set LAUNCHER_APP_1=Tetris
-if not defined LAUNCHER_APP_2 set LAUNCHER_APP_2=Flappy
+if not defined LAUNCHER_APPS (
+  if not defined LAUNCHER_APP_1 set LAUNCHER_APP_1=Tetris
+  if not defined LAUNCHER_APP_2 set LAUNCHER_APP_2=Flappy
+  set LAUNCHER_APPS="!LAUNCHER_APP_1!"
+  if /I not "!LAUNCHER_APP_2!"=="None" set LAUNCHER_APPS=!LAUNCHER_APPS! "!LAUNCHER_APP_2!"
+)
 
 set CPU=-mcpu=cortex-m0 -mthumb
 set INC=-I%VAPORWARE%\include -Igenerated -Isrc
@@ -32,7 +36,7 @@ if not exist generated mkdir generated
 if not exist build mkdir build
 
 echo [config] Selecting bundled apps...
-%PYTHON% configure_launcher.py --apps "%LAUNCHER_APP_1%" "%LAUNCHER_APP_2%" || goto :error
+%PYTHON% configure_launcher.py --apps %LAUNCHER_APPS% || goto :error
 call generated\launcher_build_config.bat || goto :error
 
 echo [0/12] Preparing factory vape seed...
@@ -102,6 +106,31 @@ if "%LAUNCHER_BUILD_SLIDESHOW%"=="1" (
   echo [module] slideshow.c
   %GCC% %CFLAGS% -c src\slideshow.c -o build\slideshow.o || goto :error
   set MODULE_OBJECTS=!MODULE_OBJECTS! build\slideshow.o
+)
+if "%LAUNCHER_BUILD_MARIO%"=="1" (
+  echo [module] Mario 1-1
+  %GCC% %CFLAGS% -Dapp_init=mario_module_init -Dapp_update=mario_module_update -Dapp_wake=mario_module_wake -c "..\Mario\src\main.c" -o build\mario_module.o || goto :error
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\mario_module.o
+)
+if "%LAUNCHER_BUILD_GEOMETRY_DASH%"=="1" (
+  echo [module] Geometry Dash
+  %GCC% %CFLAGS% -Dapp_init=geometry_dash_module_init -Dapp_update=geometry_dash_module_update -Dapp_wake=geometry_dash_module_wake -c "..\GeometryDash\src\main.c" -o build\geometry_dash_module.o || goto :error
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\geometry_dash_module.o
+)
+if "%LAUNCHER_BUILD_CHROME_DINO%"=="1" (
+  echo [module] Chrome Dino
+  %GCC% %CFLAGS% -Dapp_init=chrome_dino_module_init -Dapp_update=chrome_dino_module_update -Dapp_wake=chrome_dino_module_wake -c "..\ChromeDino\src\main.c" -o build\chrome_dino_module.o || goto :error
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\chrome_dino_module.o
+)
+if "%LAUNCHER_BUILD_TOWER_STACKER%"=="1" (
+  echo [module] Tower Stacker
+  %GCC% %CFLAGS% -Dapp_init=tower_stacker_module_init -Dapp_update=tower_stacker_module_update -Dapp_wake=tower_stacker_module_wake -c "..\TowerStacker\src\main.c" -o build\tower_stacker_module.o || goto :error
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\tower_stacker_module.o
+)
+if "%LAUNCHER_BUILD_DOOM%"=="1" (
+  echo [module] Doom
+  %GCC% %CFLAGS% -Dapp_init=doom_module_init -Dapp_update=doom_module_update -Dapp_wake=doom_module_wake -Dvape_coil_on=doom_launcher_coil_on -Dvape_coil_off=doom_launcher_coil_off -c "..\Doom\src\doom.c" -o build\doom_module.o || goto :error
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\doom_module.o
 )
 
 echo [9/12] vape_level.c (Launcher)
