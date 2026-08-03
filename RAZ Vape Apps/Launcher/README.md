@@ -13,6 +13,7 @@ builds a fresh image from its two Launcher bundle selectors before flashing.
 | Tetris | One short press | Move right after the double-tap window |
 | Tetris | Two short presses | Move left |
 | Tetris | Hold 450 ms | Rotate clockwise |
+| Tetris | Draw from pressure sensor | Hard-drop and lock the active piece |
 | Tetris | Hold 2 s, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Double-tap | Switch Normal / Boost output mode |
@@ -23,7 +24,9 @@ builds a fresh image from its two Launcher bundle selectors before flashing.
 | Flappy | Hold 2 s, then release | Return to menu |
 
 Every launcher transition turns the coil output off first. Tetris never requests
-coil output. The embedded Flappy code
+coil output during ordinary play. Clearing a row opens a 1.5-second `VAPE NOW`
+window measured from the clear; only an active pressure-sensor draw inside that
+window can enable it, and release or timeout stops it immediately. The embedded Flappy code
 keeps its current score-triggered coil behaviour, so its own safeguards and controls
 remain unchanged.
 

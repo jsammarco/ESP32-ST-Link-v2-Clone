@@ -22,11 +22,12 @@ if not exist build mkdir build
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\battery.c" -o build\battery.o || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\nv.c"      -o build\nv.o      || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\app.c"     -o build\app.o     || goto :error
+%GCC% %CFLAGS% -c "..\Launcher\src\draw_sensor.c" -o build\draw_sensor.o || goto :error
 %GCC% %CFLAGS% -c src\main.c                 -o build\main.o    || goto :error
 
 %GCC% %CPU% -T"%VAPORWARE%\n32g031.ld" -Wl,--gc-sections -Wl,-Map=build\%APP_NAME%.map -nostdlib -lnosys ^
   build\startup.o build\system.o build\display.o build\vape.o ^
-  build\button.o build\battery.o build\nv.o build\app.o build\main.o ^
+  build\button.o build\battery.o build\nv.o build\app.o build\draw_sensor.o build\main.o ^
   -o build\%APP_NAME%.elf || goto :error
 
 %OBJCOPY% -O binary build\%APP_NAME%.elf build\%APP_NAME%.bin || goto :error

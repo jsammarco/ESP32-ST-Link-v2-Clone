@@ -16,9 +16,20 @@
 #include "app.h"
 #include "button.h"
 #include "display.h"
+#include "draw_sensor.h"
 #include "nv.h"
 #include "system.h"
 #include "tetris.h"
+
+#ifndef TETRIS_COIL_ON
+#include "vape_level.h"
+#define TETRIS_COIL_ON()  vape_level_coil_on()
+#define TETRIS_COIL_OFF() vape_level_coil_off()
+#endif
+
+#ifndef TETRIS_COIL_ALLOWED
+#define TETRIS_COIL_ALLOWED() 1u
+#endif
 
 #define BOARD_W             10u
 #define BOARD_H             20u
@@ -30,6 +41,7 @@
 #define ROTATE_HOLD_MS      450u
 #define LOCK_DELAY_MS       450u
 #define TETRIS_SLEEP_MS   30000u
+#define LINE_REWARD_MS      1500u
 
 #define GHOST_FLAG          0x80u
 #define INVALID_DRAWN       0xFFu
@@ -109,6 +121,10 @@ static uint8_t g_game_over;
 static uint8_t g_grounded;
 static uint16_t g_grounded_since;
 static uint16_t g_last_gravity;
+static uint8_t g_draw_was_active;
+static uint8_t g_line_reward_armed;
+static uint16_t g_line_reward_started;
+static uint8_t g_coil_commanded;
 
 static uint8_t g_tap_pending;
 static uint16_t g_first_tap_release;
@@ -119,6 +135,7 @@ static uint32_t g_drawn_best;
 static uint16_t g_drawn_lines;
 static uint8_t g_drawn_level;
 static uint8_t g_drawn_next;
+static uint8_t g_drawn_reward;
 
 static const uint8_t *glyph_for(char character)
 {
@@ -346,6 +363,13 @@ static void draw_hud_changes(void)
         draw_next_piece();
         g_drawn_next = g_next_piece;
     }
+    if (g_line_reward_armed != g_drawn_reward) {
+        display_fill_rect(66u, 129u, 62u, 12u, COL_PANEL);
+        if (g_line_reward_armed) {
+            draw_text(81u, 133u, "VAPE NOW", COL_GREEN, 1u);
+        }
+        g_drawn_reward = g_line_reward_armed;
+    }
 }
 
 static void draw_board_frame(void)
@@ -375,6 +399,7 @@ static void invalidate_hud(void)
     g_drawn_lines = 0xFFFFu;
     g_drawn_level = 0xFFu;
     g_drawn_next = 0xFFu;
+    g_drawn_reward = 0xFFu;
 }
 
 static void draw_screen(void)
@@ -449,8 +474,30 @@ static uint8_t take_from_bag(void)
     return g_bag[g_bag_index++];
 }
 
+static void set_coil(uint8_t on)
+{
+    /* Re-evaluate the safety gate for the entire draw, not just its first
+     * frame, so a newly detected low-battery condition shuts PA5 off. */
+    if (on && TETRIS_COIL_ALLOWED()) {
+        if (!g_coil_commanded) {
+            TETRIS_COIL_ON();
+            g_coil_commanded = 1u;
+        }
+    } else if (g_coil_commanded) {
+        TETRIS_COIL_OFF();
+        g_coil_commanded = 0u;
+    }
+}
+
+static void cancel_line_reward(void)
+{
+    g_line_reward_armed = 0u;
+    set_coil(0u);
+}
+
 static void finish_game(void)
 {
+    cancel_line_reward();
     g_piece_active = 0u;
     g_game_over = 1u;
     g_tap_pending = 0u;
@@ -489,6 +536,7 @@ static void clear_board(void)
 
 static void begin_game(void)
 {
+    cancel_line_reward();
     clear_board();
     g_score = 0u;
     g_lines = 0u;
@@ -617,6 +665,10 @@ static void lock_piece(void)
         g_score += (uint32_t)rewards[cleared - 1u] * g_level;
         g_lines = (uint16_t)(g_lines + cleared);
         g_level = (uint8_t)(g_lines / 10u + 1u);
+        /* A line clear opens an absolute 1.5-second reward window. The coil
+         * still requires an active, qualified pressure-sensor draw. */
+        g_line_reward_started = ms_now();
+        g_line_reward_armed = 1u;
     }
     spawn_piece();
     g_last_gravity = ms_now();
@@ -634,6 +686,41 @@ static void gravity_step(uint16_t now)
         g_grounded = 1u;
         g_grounded_since = now;
     }
+}
+
+static void hard_drop(void)
+{
+    uint8_t rows = 0u;
+
+    if (!g_piece_active || g_game_over) {
+        return;
+    }
+    while (!collides(g_piece.x, (int8_t)(g_piece.y + 1), g_piece.rotation)) {
+        g_piece.y++;
+        rows++;
+    }
+    g_score += (uint32_t)rows * 2u;
+    g_grounded = 0u;
+    lock_piece();
+}
+
+static void update_pressure_draw(void)
+{
+    const uint8_t active = draw_sensor_active();
+
+    if (active) {
+        app_mark_activity();
+    }
+    if (active && !g_draw_was_active) {
+        hard_drop();
+    }
+    g_draw_was_active = active;
+
+    if (g_line_reward_armed &&
+        (uint16_t)(ms_now() - g_line_reward_started) >= LINE_REWARD_MS) {
+        cancel_line_reward();
+    }
+    set_coil((uint8_t)(active && g_line_reward_armed));
 }
 
 static void update_button(uint16_t now)
@@ -682,6 +769,11 @@ static void update_button(uint16_t now)
 
 void tetris_init(void)
 {
+    TETRIS_COIL_OFF();
+    g_coil_commanded = 0u;
+    g_line_reward_armed = 0u;
+    g_draw_was_active = 0u;
+    draw_sensor_init();
     g_rng = 0x54455452u ^ (uint32_t)ms_now();
     g_best_score = nv_read(NV_KEY_APP_2, 0u);
     app_set_sleep_timeout(TETRIS_SLEEP_MS);
@@ -695,6 +787,7 @@ void tetris_update(uint32_t frame)
     const uint16_t gravity = g_gravity_ms[(g_level > 16u) ? 15u : (g_level - 1u)];
     (void)frame;
 
+    update_pressure_draw();
     update_button(now);
 
     if (!g_game_over && (uint16_t)(now - g_last_gravity) >= gravity) {
@@ -712,6 +805,11 @@ void tetris_update(uint32_t frame)
 
 void tetris_wake(void)
 {
+    TETRIS_COIL_OFF();
+    g_coil_commanded = 0u;
+    g_line_reward_armed = 0u;
+    g_draw_was_active = 0u;
+    draw_sensor_init();
     g_tap_pending = 0u;
     g_press_was_long = 0u;
     g_last_gravity = ms_now();

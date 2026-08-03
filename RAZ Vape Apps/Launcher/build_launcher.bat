@@ -67,7 +67,9 @@ echo [7/12] nv.c       (vaporware)
 echo [8/12] app.c      (vaporware)
 %GCC% %CFLAGS% -c %VAPORWARE%\src\app.c     -o build\app.o     || goto :error
 
-set MODULE_OBJECTS=
+echo [sensor] draw_sensor.c
+%GCC% %CFLAGS% -c src\draw_sensor.c -o build\draw_sensor.o || goto :error
+set MODULE_OBJECTS=build\draw_sensor.o
 if "%LAUNCHER_BUILD_TETRIS%"=="1" (
   echo [module] tetris.c
   %GCC% %CFLAGS% -c src\tetris.c -o build\tetris.o || goto :error
@@ -81,8 +83,7 @@ if "%LAUNCHER_BUILD_FLAPPY%"=="1" (
 if "%LAUNCHER_BUILD_SLIDESHOW%"=="1" (
   echo [module] slideshow.c
   %GCC% %CFLAGS% -c src\slideshow.c -o build\slideshow.o || goto :error
-  %GCC% %CFLAGS% -c src\draw_sensor.c -o build\draw_sensor.o || goto :error
-  set MODULE_OBJECTS=!MODULE_OBJECTS! build\slideshow.o build\draw_sensor.o
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\slideshow.o
 )
 
 echo [9/12] vape_level.c (Launcher)
