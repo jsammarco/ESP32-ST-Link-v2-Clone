@@ -114,8 +114,8 @@ class RazManager(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("RAZ ESP32 Manager")
-        self.minsize(760, 990)
-        self.geometry("860x1140")
+        self.minsize(780, 1020)
+        self.geometry("880x1220")
         self.option_add("*tearOff", False)
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -158,7 +158,7 @@ class RazManager(tk.Tk):
         self.rowconfigure(0, weight=1)
         main.columnconfigure(1, weight=1)
         main.columnconfigure(3, weight=0)
-        main.rowconfigure(5, weight=1)
+        main.rowconfigure(7, weight=1)
 
         ttk.Label(main, text="RAZ ESP32 Manager", font=("Segoe UI", 16, "bold")).grid(
             row=0, column=0, columnspan=4, sticky="w"
@@ -178,8 +178,33 @@ class RazManager(tk.Tk):
         update_esp32.grid(row=2, column=3, sticky="w", padx=(8, 0))
         self.action_widgets.extend([refresh, update_esp32])
 
+        mode_frame = ttk.LabelFrame(main, text="ESP32 operating mode", padding=10)
+        mode_frame.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(14, 0))
+        get_mode = ttk.Button(mode_frame, text="Get current mode", command=self.get_esp32_mode)
+        get_mode.grid(row=0, column=0, sticky="w")
+        programmer_mode = ttk.Button(
+            mode_frame,
+            text="Enable SWD programmer",
+            command=self.enable_esp32_programmer,
+        )
+        programmer_mode.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        runtime_mode = ttk.Button(
+            mode_frame,
+            text="Enable Wi-Fi runtime",
+            command=self.enable_esp32_runtime,
+        )
+        runtime_mode.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self.action_widgets.extend([get_mode, programmer_mode, runtime_mode])
+        ttk.Label(
+            mode_frame,
+            text=("One integrated ESP32 image provides both modes. Shared GPIO25/GPIO26 stay high-Z while "
+                  "the programmer is idle; Wi-Fi runtime only drives its TX line after the vape sends PING."),
+            foreground="#444444",
+            wraplength=760,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
         read_frame = ttk.LabelFrame(main, text="Read only", padding=10)
-        read_frame.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(14, 0))
+        read_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         probe = ttk.Button(read_frame, text="Test connection", command=self.probe)
         probe.grid(row=0, column=0, sticky="w")
         values = ttk.Button(read_frame, text="Get saved vape values", command=self.read_values)
@@ -193,7 +218,7 @@ class RazManager(tk.Tk):
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         write_frame = ttk.LabelFrame(main, text="Backup, restore, and app flash", padding=10)
-        write_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        write_frame.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         write_frame.columnconfigure(1, weight=1)
         flash_tip = tk.Label(
             write_frame,
@@ -334,19 +359,19 @@ class RazManager(tk.Tk):
         ).grid(row=13, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         values_frame = ttk.LabelFrame(main, text="Saved values", padding=10)
-        values_frame.grid(row=5, column=0, columnspan=4, sticky="new", pady=(12, 0))
+        values_frame.grid(row=6, column=0, columnspan=4, sticky="new", pady=(12, 0))
         ttk.Label(values_frame, textvariable=self.value_text_var, justify="left", wraplength=760).grid(sticky="w")
 
         log_frame = ttk.LabelFrame(main, text="Operation log", padding=8)
-        log_frame.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=(12, 0))
-        main.rowconfigure(6, weight=1)
+        log_frame.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=(12, 0))
+        main.rowconfigure(7, weight=1)
         self.log = scrolledtext.ScrolledText(log_frame, height=8, wrap="word", state="disabled", font=("Cascadia Mono", 9))
         self.log.grid(sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
         status_frame = ttk.Frame(main)
-        status_frame.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        status_frame.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(12, 0))
         status_frame.columnconfigure(0, weight=1)
         status = ttk.Label(status_frame, textvariable=self.status_var, relief="sunken", anchor="w")
         status.grid(row=0, column=0, sticky="ew")
@@ -617,7 +642,8 @@ class RazManager(tk.Tk):
             return
         if not messagebox.askyesno(
             "Update ESP32 firmware?",
-            "This uploads the current ESP32 SWD-adapter firmware to the selected COM port.\n\n"
+            "This uploads the integrated ESP32 SWD-programmer and Wi-Fi/browser-runtime firmware "
+            "to the selected COM port.\n\n"
             "It does not flash or erase the vape. The ESP32 will restart after the upload.\n\n"
             f"Update the ESP32 on {port}?",
             icon="warning",
@@ -627,6 +653,41 @@ class RazManager(tk.Tk):
             "Update ESP32 firmware",
             [platformio, "run", "--target", "upload", "--upload-port", port],
         )
+
+    def get_esp32_mode(self) -> None:
+        self.run_tool("Reading ESP32 mode", ["--esp32-mode"])
+
+    def enable_esp32_runtime(self) -> None:
+        port = self.selected_port()
+        if port is None or self.process is not None:
+            return
+        if not messagebox.askyesno(
+            "Enable Wi-Fi runtime?",
+            "This persistently switches the ESP32 from SWD programming to the 9,600-baud "
+            "RAZ Wi-Fi runtime. SWD operations remain unavailable until programmer mode is restored.\n\n"
+            "The vape must already contain the N32 menu firmware. This action does not flash the vape "
+            "and does not connect the ESP32 to any network.\n\n"
+            f"Enable Wi-Fi runtime on {port}?",
+            icon="question",
+        ):
+            return
+        self.run_tool("Enable Wi-Fi runtime", ["--esp32-runtime"])
+
+    def enable_esp32_programmer(self) -> None:
+        port = self.selected_port()
+        if port is None or self.process is not None:
+            return
+        if not messagebox.askyesno(
+            "Enable SWD programmer?",
+            "This stops Wi-Fi/UART runtime and persistently restores SWD programmer mode. "
+            "The shared communication pins remain high-Z until a programming operation starts.\n\n"
+            "For N32 recovery, hold the vape button while resetting or powering the vape, then use "
+            "Test connection.\n\n"
+            f"Enable SWD programmer on {port}?",
+            icon="question",
+        ):
+            return
+        self.run_tool("Enable SWD programmer", ["--esp32-programmer"])
 
     def _read_process(self, process: subprocess.Popen[str]) -> None:
         assert process.stdout is not None

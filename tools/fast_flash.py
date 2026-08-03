@@ -73,6 +73,21 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--probe", action="store_true", help="Read the target DPIDR only; writes nothing")
     mode.add_argument(
+        "--esp32-mode",
+        action="store_true",
+        help="Report whether the ESP32 is in SWD programmer or Wi-Fi runtime mode",
+    )
+    mode.add_argument(
+        "--esp32-runtime",
+        action="store_true",
+        help="Persistently switch the ESP32 to N32 Wi-Fi/UART runtime mode",
+    )
+    mode.add_argument(
+        "--esp32-programmer",
+        action="store_true",
+        help="Persistently switch the ESP32 to SWD programmer mode (shared pins remain high-Z while idle)",
+    )
+    mode.add_argument(
         "--values",
         action="store_true",
         help="Read saved internal-flash values only; the target pauses briefly and then resumes",
@@ -166,6 +181,18 @@ def probe(device: serial.Serial) -> int:
     print(response)
     if not response.startswith("IDR "):
         raise RuntimeError(f"ESP32 SWD probe failed: {response}")
+    return 0
+
+
+def esp32_mode(device: serial.Serial, command: bytes, expected: str | None = None) -> int:
+    device.write(command)
+    device.flush()
+    response = read_line(device, time.monotonic() + 5)
+    print(response)
+    if not response.startswith("MODE "):
+        raise RuntimeError(f"ESP32 mode command failed: {response}")
+    if expected is not None and not response.startswith(f"MODE {expected} "):
+        raise RuntimeError(f"ESP32 did not enter {expected.lower()} mode: {response}")
     return 0
 
 
@@ -402,6 +429,12 @@ def main() -> int:
     configure_console()
     args = parse_args()
     with open_esp32(args.port, args.baud) as device:
+        if args.esp32_mode:
+            return esp32_mode(device, b"M")
+        if args.esp32_runtime:
+            return esp32_mode(device, b"W", "RUNTIME")
+        if args.esp32_programmer:
+            return esp32_mode(device, b"P", "PROGRAMMER")
         if args.probe:
             return probe(device)
         if args.values:

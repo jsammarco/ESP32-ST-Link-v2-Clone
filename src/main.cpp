@@ -8,8 +8,8 @@
  * localhost TCP endpoint for OpenOCD.
  *
  * Target wiring (through a USB-C male breakout plugged into the RAZ):
- *   GPIO 25 -- 100 ohm -- either CC contact
- *   GPIO 26 -- 100 ohm -- the other CC contact
+ *   GPIO 25 -- 1 kohm -- either CC contact
+ *   GPIO 26 -- 1 kohm -- the other CC contact
  *   GND ----------------- GND
  *
  * Before a direct probe/program operation, the firmware tries GPIO26 as
@@ -23,6 +23,9 @@
 #include <Arduino.h>
 #include <driver/gpio.h>
 
+#include "raz_pin_config.h"
+#include "raz_runtime.h"
+
 namespace {
 
 struct SwdPinMap {
@@ -31,8 +34,10 @@ struct SwdPinMap {
 };
 
 constexpr SwdPinMap SWD_PIN_MAPS[] = {
-    {GPIO_NUM_26, GPIO_NUM_25},  // Attempt 1: requested default
-    {GPIO_NUM_25, GPIO_NUM_26},  // Attempt 2: swapped
+    {static_cast<gpio_num_t>(RAZ_CC2_GPIO),
+     static_cast<gpio_num_t>(RAZ_CC1_GPIO)},  // Attempt 1: requested default
+    {static_cast<gpio_num_t>(RAZ_CC1_GPIO),
+     static_cast<gpio_num_t>(RAZ_CC2_GPIO)},  // Attempt 2: swapped
 };
 constexpr uint8_t SWD_PIN_MAP_COUNT = sizeof(SWD_PIN_MAPS) / sizeof(SWD_PIN_MAPS[0]);
 constexpr gpio_num_t NRST_PIN  = GPIO_NUM_27;  // Optional; leave unwired by default.
@@ -106,9 +111,33 @@ bool swdio_is_output = false;
 bool last_swdio_level = false;
 gpio_num_t swdio_pin = SWD_PIN_MAPS[0].swdio;
 gpio_num_t swclk_pin = SWD_PIN_MAPS[0].swclk;
+uint8_t active_swd_map = 0;
+bool swd_pins_active = false;
 uint8_t fast_image[FAST_IMAGE_MAX_BYTES];
 
 void set_swdio_direction(bool output);
+
+void release_target_pins() {
+  gpio_set_direction(static_cast<gpio_num_t>(RAZ_CC1_GPIO), GPIO_MODE_INPUT);
+  gpio_set_direction(static_cast<gpio_num_t>(RAZ_CC2_GPIO), GPIO_MODE_INPUT);
+  gpio_set_pull_mode(static_cast<gpio_num_t>(RAZ_CC1_GPIO), GPIO_FLOATING);
+  gpio_set_pull_mode(static_cast<gpio_num_t>(RAZ_CC2_GPIO), GPIO_FLOATING);
+  gpio_set_direction(NRST_PIN, GPIO_MODE_INPUT);
+  swdio_is_output = false;
+  swd_pins_active = false;
+}
+
+struct SwdPinReleaseGuard {
+  ~SwdPinReleaseGuard() { release_target_pins(); }
+};
+
+void select_swd_pin_map(uint8_t map_index);
+
+void ensure_swd_pins_active() {
+  if (!swd_pins_active) {
+    select_swd_pin_map(raz_saved_swd_map());
+  }
+}
 
 void wait_half_cycle() {
   if (HALF_CYCLE_US != 0) {
@@ -128,6 +157,7 @@ void select_swd_pin_map(uint8_t map_index) {
 
   swdio_pin = SWD_PIN_MAPS[map_index].swdio;
   swclk_pin = SWD_PIN_MAPS[map_index].swclk;
+  active_swd_map = map_index;
   swdio_is_output = false;
   last_swdio_level = true;
 
@@ -139,6 +169,9 @@ void select_swd_pin_map(uint8_t map_index) {
   gpio_set_level(swclk_pin, 0);
   set_swdio_direction(true);
   gpio_set_level(swdio_pin, 1);
+  gpio_set_level(NRST_PIN, 1);
+  gpio_set_direction(NRST_PIN, GPIO_MODE_OUTPUT);
+  swd_pins_active = true;
 }
 
 void set_swdio_direction(bool output) {
@@ -184,13 +217,7 @@ void send_sample() {
 }
 
 void end_transaction() {
-  gpio_set_level(swclk_pin, 0);
-  // The next OpenOCD session begins with an SWD line-reset sequence before it
-  // sends an explicit direction command. Keep the idle line driven high so
-  // that sequence is valid; normal target reads still release it via 'o'.
-  last_swdio_level = true;
-  set_swdio_direction(true);
-  gpio_set_level(swdio_pin, 1);
+  release_target_pins();
   digitalWrite(LED_PIN, LOW);
 }
 
@@ -381,8 +408,12 @@ bool fast_enable_debug(uint32_t *dpidr) {
       return false;
     }
     if ((ctrl_stat & 0xA0000000U) == 0xA0000000U) {
-      return fast_dp_write(DP_SELECT, 0) &&
-             fast_ap_write(AP_CSW, AP_CSW_32BIT_SINGLE_INC);
+      const bool configured = fast_dp_write(DP_SELECT, 0) &&
+          fast_ap_write(AP_CSW, AP_CSW_32BIT_SINGLE_INC);
+      if (configured) {
+        raz_remember_swd_map(active_swd_map);
+      }
+      return configured;
     }
     delay(1);
   }
@@ -659,15 +690,21 @@ bool read_serial_exact(uint8_t *buffer, size_t size, uint32_t timeout_ms) {
 }
 
 void fast_probe_command() {
+  SwdPinReleaseGuard release_guard;
   uint32_t dpidr = 0;
   if (!fast_enable_debug(&dpidr)) {
     Serial.println("ERR PROBE");
     return;
   }
-  Serial.printf("IDR %08lX\n", static_cast<unsigned long>(dpidr));
+  Serial.printf("IDR %08lX MAP%u SWDIO=GPIO%u SWCLK=GPIO%u\n",
+                static_cast<unsigned long>(dpidr),
+                static_cast<unsigned>(active_swd_map + 1U),
+                static_cast<unsigned>(swdio_pin),
+                static_cast<unsigned>(swclk_pin));
 }
 
 void fast_flash_command() {
+  SwdPinReleaseGuard release_guard;
   uint8_t header[4];
   if (!read_serial_exact(header, sizeof(header), 3000)) {
     Serial.println("ERR HEADER");
@@ -737,6 +774,7 @@ bool fast_dump_region(uint32_t address, size_t size) {
 }
 
 void fast_backup_command() {
+  SwdPinReleaseGuard release_guard;
   uint32_t dpidr = 0;
   if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
     Serial.println("ERR CONNECT");
@@ -846,6 +884,7 @@ bool fast_valid_launcher_config(uint8_t key, uint32_t value) {
 }
 
 void fast_launcher_config_command() {
+  SwdPinReleaseGuard release_guard;
   uint8_t header[5];
   if (!read_serial_exact(header, sizeof(header), 3000)) {
     Serial.println("ERR HEADER");
@@ -887,6 +926,7 @@ void fast_launcher_config_command() {
 }
 
 void fast_values_command() {
+  SwdPinReleaseGuard release_guard;
   uint32_t dpidr = 0;
   if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
     Serial.println("ERR CONNECT");
@@ -927,6 +967,7 @@ void fast_values_command() {
 }
 
 void fast_restore_command() {
+  SwdPinReleaseGuard release_guard;
   uint8_t header[4];
   if (!read_serial_exact(header, sizeof(header), 3000)) {
     Serial.println("ERR HEADER");
@@ -1039,6 +1080,7 @@ bool set_screen_stream_token(uint32_t token_address, bool enabled) {
 }
 
 void fast_screen_stream_command() {
+  SwdPinReleaseGuard release_guard;
   uint32_t dpidr = 0;
   if (!fast_enable_debug(&dpidr)) {
     Serial.println("ERR CONNECT");
@@ -1125,9 +1167,32 @@ void fast_screen_stream_command() {
   }
 }
 
+bool handle_mode_command(uint8_t command) {
+  if (command == 'M') {
+    raz_print_mode();
+    return true;
+  }
+  if (command == 'W') {
+    release_target_pins();
+    raz_runtime_start(raz_saved_swd_map(), true);
+    raz_print_mode();
+    return true;
+  }
+  if (command == 'P') {
+    raz_runtime_stop(true);
+    release_target_pins();
+    raz_print_mode();
+    return true;
+  }
+  return false;
+}
+
 void handle_command(uint8_t command) {
+  if (handle_mode_command(command)) {
+    return;
+  }
   if (command == 'Y') {
-    Serial.println("RAZ_ESP32 2 STREAM_CMD2");
+    Serial.println("RAZ_ESP32 4 STREAM_CMD2 DUAL_MODE WEB_TEXT");
     return;
   }
   if (command == 'I') {
@@ -1161,6 +1226,7 @@ void handle_command(uint8_t command) {
 
   // remote_bitbang SWD write: 'd'..'g', bit 1 = SWCLK, bit 0 = SWDIO.
   if (command >= 'd' && command <= 'g') {
+    ensure_swd_pins_active();
     const uint8_t bits = command - 'd';
     write_swd_pins((bits & 0x2U) != 0, (bits & 0x1U) != 0);
     return;
@@ -1168,15 +1234,18 @@ void handle_command(uint8_t command) {
 
   switch (command) {
     case 'O':
+      ensure_swd_pins_active();
       set_swdio_direction(true);
       break;
 
     case 'o':
+      ensure_swd_pins_active();
       set_swdio_direction(false);
       break;
 
     case 'c':  // SWDIO sample request
     case 'R':  // JTAG sample request; harmless compatibility support
+      ensure_swd_pins_active();
       send_sample();
       break;
 
@@ -1205,10 +1274,12 @@ void handle_command(uint8_t command) {
       // supported transport, but accepting these values makes accidental
       // OpenOCD JTAG probing non-destructive and keeps the clock idle low.
       if (command >= '0' && command <= '7') {
+        ensure_swd_pins_active();
         const uint8_t bits = command - '0';
         write_swd_pins((bits & 0x4U) != 0, (bits & 0x1U) != 0);
       } else if (command >= 'r' && command <= 'u') {
         // remote_bitbang reset command: bit 0 is SRST (active high internally).
+        ensure_swd_pins_active();
         set_reset(((command - 'r') & 0x1U) != 0);
       }
       break;
@@ -1226,13 +1297,28 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  select_swd_pin_map(0);
-  gpio_set_direction(NRST_PIN, GPIO_MODE_OUTPUT);
-  set_reset(false);
+  raz_mode_storage_init();
+  release_target_pins();
+  if (raz_saved_runtime_mode()) {
+    raz_runtime_start(raz_saved_swd_map(), false);
+  }
 }
 
 void loop() {
-  while (Serial.available() > 0) {
+  if (raz_runtime_active()) {
+    while (raz_runtime_active() && Serial.available() > 0) {
+      const uint8_t command = static_cast<uint8_t>(Serial.read());
+      if (!handle_mode_command(command)) {
+        Serial.println("ERR MODE_RUNTIME");
+      }
+    }
+    if (raz_runtime_active()) {
+      raz_runtime_poll();
+    }
+    return;
+  }
+
+  while (!raz_runtime_active() && Serial.available() > 0) {
     handle_command(static_cast<uint8_t>(Serial.read()));
   }
 }

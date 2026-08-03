@@ -1,5 +1,15 @@
 # ESP32 DevKit V1 SWD adapter for RAZ vape hardware
 
+## N32 + ESP32 Wi-Fi menu proof of concept
+
+The heater-disabled N32 proof of concept is under `firmware/n32g031-poc`. The
+root ESP32 firmware is one integrated image that switches persistently between
+SWD programmer and 9,600-baud Wi-Fi runtime modes; `firmware/esp32-poc` is kept
+as a standalone reference. Start with the complete wiring, voltage, backup,
+staged flashing, recovery, and test guide in
+[`docs/RAZ_ESP32_POC.md`](docs/RAZ_ESP32_POC.md). Do not flash it before the
+guide's voltage, CC mapping, physical isolation, and fresh-backup gates pass.
+
 An original ESP32 DevKit V1 can act as a low-cost SWD programmer for the
 Nations N32G031 MCU used in some RAZ DC25000 devices. The ESP32 does **not**
 enumerate as a real USB ST-Link V2—the DevKit USB connector is a CP210x/CH340
@@ -17,8 +27,9 @@ physical ST-Link is required.
 
 ## What is included
 
-- ESP32 DevKit V1 firmware: local SWD probe, erase, program, verification, and
-  target reset for the N32G031.
+- Integrated ESP32 DevKit V1 firmware: local SWD probe/flash/backup/restore plus
+  a mutually exclusive Wi-Fi scanner, network client, and bounded HTML/CSS text
+  browser runtime for the N32 menu.
 - `tools/fast_flash.py`: the recommended Windows serial flasher.
 - `tools/raz_manager_gui.py`: a local desktop GUI for connection testing,
   saved-value reads, backup, restore, and bundled-app flashing.
@@ -50,7 +61,8 @@ flash from this clone.
 - ESP32 DevKit V1 with its normal USB-to-UART connection
 - USB-C **male** breakout board
 - Three short jumper wires
-- 100 ohm series resistors for SWDIO and SWCLK
+- Two 1 kΩ series resistors for the combined SWD/runtime signal lines (100 Ω is
+  sufficient for the older SWD-only setup)
 - A Windows PC with Python and PlatformIO
 
 ### Wiring
@@ -59,8 +71,8 @@ On the RAZ hardware, the USB-C CC contacts are used as SWD pins:
 
 | ESP32 DevKit V1 | USB-C male breakout | Signal |
 |---|---|---|
-| `GPIO25` through 100 ohm | `CC1` | SWCLK on attempt 1; SWDIO on attempt 2 |
-| `GPIO26` through 100 ohm | `CC2` | SWDIO on attempt 1; SWCLK on attempt 2 |
+| `GPIO25` through 1 kΩ | `CC1` | SWCLK/runtime RX on map 1; SWDIO/runtime TX on map 2 |
+| `GPIO26` through 1 kΩ | `CC2` | SWDIO/runtime TX on map 1; SWCLK/runtime RX on map 2 |
 | `GND` | `GND` | Common ground |
 
 Do **not** connect ESP32 `3V3`, `5V`, `VBUS`, `D+`, or `D-` to the vape. The
@@ -94,6 +106,19 @@ selected backup, flash Launcher/Tetris/Pac-Man/Mario 1-1/Geometry Dash/Slideshow
 internal-flash values. It runs the same `fast_flash.py` protocol as the
 command-line workflow and its log shows the exact ESP32 progress messages.
 
+The **ESP32 operating mode** panel queries the current mode or persistently
+selects **SWD programmer** and **Wi-Fi runtime**. Programmer-idle leaves both CC
+signal GPIOs high-impedance; runtime initially enables RX only and attaches TX
+after the N32 sends `PING`. Switch back to programmer mode and boot the N32 with
+its button held before attempting recovery SWD.
+
+The N32 POC runtime can scan and connect to an AP, enter a password or custom URL
+with its one-button on-screen keyboard, and open Hackaday.com, Google.com, or a
+custom address in a constrained text browser. The ESP32 validates HTTPS, parses
+HTML plus a small CSS subset, and sends only a ten-line viewport to the N32. In a
+page, one click scrolls down, double click scrolls up, and a 1.5-second hold
+returns to the menu. See the POC guide for keyboard controls and parser limits.
+
 When **Launcher** is selected, choose one or two bundled apps from the two
 **Launcher bundle** boxes. The available modules are Tetris, Pac-Man, Flappy, and
 Slideshow; choose **None** in the second box for a one-app launcher. The Manager
@@ -114,8 +139,9 @@ requires Pillow (`py -m pip install pillow`) and a Vaporware SDK checkout; the n
 `C:\Users\Joe\Projects\Vaporware\src` is detected automatically, or set
 `VAPORWARE_SDK` to the SDK root (or its `src` folder).
 
-Use **Update ESP32 firmware...** whenever this repository's `src/main.cpp`
-changes. The GUI locates PlatformIO (including the standard
+Use **Update ESP32 firmware...** whenever this repository's `src/main.cpp` or
+`src/raz_runtime.cpp` changes. The button builds and uploads the combined
+programmer/runtime image. The GUI locates PlatformIO (including the standard
 `~\.platformio\penv\Scripts\platformio.exe` installation), uploads to the
 selected ESP32 port, and does not communicate with or alter the vape during
 that operation.
@@ -229,6 +255,7 @@ installation instead.
 With the breakout connected and the target powered, run:
 
 ```powershell
+python tools\fast_flash.py --port COM7 --esp32-programmer
 python tools\fast_flash.py --port COM7 --probe
 ```
 
@@ -357,8 +384,9 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 |---|---|
 | `Access is denied` for `COM7` | Close PlatformIO Monitor, the serial bridge, and any other serial program. |
 | `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
+| `ERR MODE_RUNTIME` | Use **Enable SWD programmer** (or `--esp32-programmer`), reset the N32 while holding its button, then retry. |
 | `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
-| `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain the 100 ohm resistors, charge the device, and rerun the read-only probe before retrying. |
+| `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain both series resistors (1 kΩ for the combined POC), charge the device, and rerun the read-only probe before retrying. |
 | Screen does not return immediately after `DONE` | Verify the latest ESP32 firmware was uploaded, then power-cycle/reset the target before attempting another flash. |
 
 ## Project status
