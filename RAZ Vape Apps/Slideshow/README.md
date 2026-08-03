@@ -22,6 +22,14 @@ header is intentionally ignored so personal photos are never committed with the 
 
 The screen also advances automatically every eight seconds. A small marker in the
 top-left is green for Normal, purple for Boost, and red while the coil is active.
+The top-right four-bar indicator is a filtered PA6 voltage estimate; it is not a
+charger-status signal or an exact state-of-charge gauge.
+
+At approximately 3.40 V, the Slideshow locks the coil off. A reading around 3.30 V
+locks it immediately. It requires three consecutive filtered readings around 3.53 V
+or higher before re-enabling the coil. These conservative guard bands avoid allowing
+an app to fire on an unverified or low battery measurement; the factory charger stays
+under its own hardware control.
 
 Normal is a 50% software duty cycle with a 1.8-second cutoff. Boost is continuous
 output with a 0.9-second cutoff. Those values are defined at the top of
@@ -65,4 +73,3 @@ resized, so no black bars are introduced.
 
 `flash_vape.bat` uses WSL/OpenOCD and has a `STLINK_BUSID` setting near its top.
 Replace the default `3-1` with the bus ID reported by `usbipd list` on the host.
-

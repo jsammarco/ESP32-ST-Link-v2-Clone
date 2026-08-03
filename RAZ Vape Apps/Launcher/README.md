@@ -1,9 +1,8 @@
 # Launcher
 
-One firmware image containing a launcher menu, the Slideshow app, and Flappy Bird.
-The launcher shares the normal Vaporware runtime, the three photos from
-[`examples/photos`](../photos), and the existing Flappy game source. It does not
-modify `examples/flappy` or `examples/Slideshow`.
+One firmware image containing a launcher menu and one or two build-selected apps.
+Tetris, Flappy Bird, and Slideshow can occupy either slot. The RAZ ESP32 Manager
+builds a fresh image from its two Launcher bundle selectors before flashing.
 
 ## Controls
 
@@ -11,6 +10,10 @@ modify `examples/flappy` or `examples/Slideshow`.
 | --- | --- | --- |
 | Menu | Tap | Switch highlighted app |
 | Menu | Hold 650 ms, then release | Start highlighted app |
+| Tetris | One short press | Move right after the double-tap window |
+| Tetris | Two short presses | Move left |
+| Tetris | Hold 450 ms | Rotate clockwise |
+| Tetris | Hold 2 s, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Double-tap | Switch Normal / Boost output mode |
 | Slideshow | Triple-tap | Return to menu |
@@ -19,7 +22,8 @@ modify `examples/flappy` or `examples/Slideshow`.
 | Flappy | Standard button presses | Flap / game controls |
 | Flappy | Hold 2 s, then release | Return to menu |
 
-Every launcher transition turns the coil output off first. The embedded Flappy code
+Every launcher transition turns the coil output off first. Tetris never requests
+coil output. The embedded Flappy code
 keeps its current score-triggered coil behaviour, so its own safeguards and controls
 remain unchanged.
 
@@ -45,22 +49,24 @@ made normal battery discharge look jumpy.
 
 The Launcher enters **LOW BATTERY** at approximately 3.40 V (or immediately at
 approximately 3.30 V), dims the PB4 backlight to 20% using 1 kHz PWM, exits any
-running app to the warning screen, and locks the coil OFF. The lock applies to both
-the Slideshow and embedded Flappy code, so no app can energize the coil in this mode.
+running app to the warning screen, and locks the coil OFF. The lock applies to every
+bundled module, so no app can energize the coil in this mode.
 After charging, it requires three consecutive filtered readings around 3.53 V or
 higher before restoring normal brightness and coil operation. These are conservative
 guard bands; actual voltage varies with cell condition, temperature, and load.
 
-`CHARGING` is a direct active-low signal from PB1, matching the input and internal
-pull-up configuration in `firmware/MyWhiteRAZ_backup.bin`. The Launcher requires
-three consecutive 100 ms samples before changing the state, so connector noise does
-not flicker the label. It shows while the charge controller reports active charging;
-a USB-connected but fully charged device may instead show `CHARGE IDLE`.
+The Launcher's embedded Slideshow has a one-line status band above the photo. It
+shows `BATT`, percentage, and measured voltage. It uses the same filtered state as the menu;
+green is 60% or higher, yellow is 25-59%, orange is below 25%, and red means the
+low-battery lockout is active.
 
-The Launcher's embedded Slideshow has a readable status band above the photo. It
-shows `BATT`, percentage, measured voltage, and either `CHARGING` or `CHARGE IDLE`.
-It uses the same filtered state as the menu; green is 60% or higher, yellow is
-25-59%, orange is below 25%, and red means the low-battery lockout is active.
+The Launcher configures PB1 only as an input with its internal weak pull-up, matching
+the prior Launcher setup that observed a sustained low level when a cable was
+connected on the tested device. It shows this as `CABLE`; it never drives PB1 and
+does not call the signal `CHARGING`, because the factory images do not establish that
+it represents charge current, completion, or a charger-enable path. The displayed
+percentage remains a filtered voltage estimate, not a fuel gauge. Charging remains
+under the device's factory hardware control.
 
 ## Vape remaining level
 
@@ -100,15 +106,14 @@ build_launcher.bat
 flash_vape.bat
 ```
 
-`build_launcher.bat` runs the shared photo converter, producing
-`generated\photos.h` from the three source images. The generated image data and all
-build/flash output are ignored by Git. The default three-photo configuration was
-chosen to leave headroom in the N32G031's 60 KB application flash region.
+`build_launcher.bat` defaults to Tetris plus Flappy. `configure_launcher.py`
+generates the slot labels and module-selection flags, and the build compiles only
+the selected modules. Generated configuration, image data, and build output are
+ignored by Git.
 
-For a one-off Launcher image with up to three selected embedded-Slideshow photos,
-use the desktop GUI's **Choose up to 3 photos...** button while **Launcher** is
-selected. It builds `build\launcher-photos.bin` separately, then restores the normal
-generated image header, so the bundled `launcher.bin` is not replaced.
+For a one-off image, choose up to two apps in the desktop GUI. If one slot is
+Slideshow, **Choose up to 3 photos...** can replace its embedded images. The GUI
+builds `build\launcher-custom.bin` separately, so `launcher.bin` is not replaced.
 
 The flasher is compatible with an ST-Link already attached through `usbipd`; set
 `STLINK_BUSID` near the top of `flash_vape.bat` if your adapter uses a different ID.

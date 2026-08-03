@@ -59,7 +59,7 @@ static fire_source_t g_fire_source;
 static uint8_t g_coil_profile;
 static uint8_t g_battery_percent_drawn;
 static uint8_t g_battery_low_drawn;
-static uint8_t g_battery_charging_drawn;
+static uint8_t g_cable_drawn;
 static uint16_t g_battery_voltage_drawn;
 
 static uint8_t coil_profile_load(void)
@@ -114,23 +114,23 @@ static void draw_mode_marker(void)
     } else {
         colour = COL_GREEN;
     }
-    /* The battery/charge status owns the upper-left. Keep the selected output
-     * mode indicator in the unused lower-right corner of that status band. */
-    display_fill_rect(116u, 11u, 10u, 9u, COL_BLACK);
-    display_fill_rect(117u, 12u, 8u, 7u, colour);
+    /* Keep the selected output-mode indicator at the far right of the
+     * single-line battery status band. */
+    display_fill_rect(116u, 1u, 10u, 9u, COL_BLACK);
+    display_fill_rect(117u, 2u, 8u, 7u, colour);
 }
 
 static void draw_battery_status(void)
 {
     const uint8_t percent = launcher_battery_percent();
     const uint8_t low = launcher_battery_low();
-    const uint8_t charging = launcher_battery_charging();
-    const uint16_t voltage_bucket = (uint16_t)((launcher_battery_millivolts() + 5u) / 10u);
+    const uint8_t cable = launcher_cable_present();
+    const uint16_t voltage_bucket = (uint16_t)((launcher_battery_millivolts() + 25u) / 50u);
 
     launcher_draw_battery_status();
     g_battery_percent_drawn = percent;
     g_battery_low_drawn = low;
-    g_battery_charging_drawn = charging;
+    g_cable_drawn = cable;
     g_battery_voltage_drawn = voltage_bucket;
 }
 
@@ -138,11 +138,11 @@ static uint8_t update_battery_status(void)
 {
     const uint8_t percent = launcher_battery_percent();
     const uint8_t low = launcher_battery_low();
-    const uint8_t charging = launcher_battery_charging();
-    const uint16_t voltage_bucket = (uint16_t)((launcher_battery_millivolts() + 5u) / 10u);
+    const uint8_t cable = launcher_cable_present();
+    const uint16_t voltage_bucket = (uint16_t)((launcher_battery_millivolts() + 25u) / 50u);
 
     if (percent != g_battery_percent_drawn || low != g_battery_low_drawn ||
-        charging != g_battery_charging_drawn || voltage_bucket != g_battery_voltage_drawn) {
+        cable != g_cable_drawn || voltage_bucket != g_battery_voltage_drawn) {
         draw_battery_status();
         return 1u;
     }
@@ -269,7 +269,7 @@ void slideshow_init(void)
     g_draw_cutoff_latched = 0u;
     g_battery_percent_drawn = 0xFFu;
     g_battery_low_drawn = 0xFFu;
-    g_battery_charging_drawn = 0xFFu;
+    g_cable_drawn = 0xFFu;
     g_battery_voltage_drawn = 0xFFFFu;
     g_mode = MODE_NORMAL;
     g_coil_profile = coil_profile_load();
@@ -317,7 +317,7 @@ void slideshow_wake(void)
     g_draw_cutoff_latched = 0u;
     g_battery_percent_drawn = 0xFFu;
     g_battery_low_drawn = 0xFFu;
-    g_battery_charging_drawn = 0xFFu;
+    g_cable_drawn = 0xFFu;
     g_battery_voltage_drawn = 0xFFFFu;
     g_coil_profile = coil_profile_load();
     draw_sensor_init();

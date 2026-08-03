@@ -45,9 +45,25 @@ NV_VALUE_LABELS = {
     4: "Slot wins",
     5: "Launcher heater-use ticks (0.01 s)",
     6: "Launcher factory-import marker",
-    7: "App 2 value",
+    7: "Tetris high score",
 }
 VAPE_EMPTY_TICKS = 340_000
+
+
+def configure_console() -> None:
+    """Keep ESP32 diagnostic bytes from crashing legacy Windows consoles.
+
+    The protocol is ASCII, but a reset/banner or a line corrupted by a serial
+    disconnect can contain arbitrary Unicode replacement characters. Windows
+    PowerShell commonly exposes cp1252, which cannot print every character.
+    Backslash escaping preserves the message without interrupting a flash.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, OSError):
+            # Keep compatibility with redirected or custom host streams.
+            pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,7 +90,12 @@ def parse_args() -> argparse.Namespace:
     )
     mode.add_argument("--flash", type=Path, metavar="IMAGE", help="Program and verify this .bin image")
     mode.add_argument("--backup", type=Path, metavar="DIRECTORY", help="Save full internal flash and a RAM snapshot")
-    mode.add_argument("--restore", type=Path, metavar="BACKUP", help="Restore a full internal-flash backup")
+    mode.add_argument(
+        "--restore",
+        type=Path,
+        metavar="BACKUP_OR_BIN",
+        help="Restore a backup folder or standalone 64 KB internal-flash .bin image",
+    )
     parser.add_argument(
         "--confirm-restore",
         action="store_true",
@@ -103,11 +124,26 @@ def open_esp32(port: str, baud: int) -> serial.Serial:
     return device
 
 
+def normalize_protocol_line(line: str) -> str:
+    """Discard replacement-byte reset noise glued before a terminal reply.
+
+    The ESP32 can emit 0xFF bytes while resetting the target. On Windows those
+    decode as U+FFFD; if they arrive in the same serial line as ``DONE``, an
+    otherwise successful flash must still be accepted as complete.
+    """
+    for reply in ("RESTORE_READY", "READY", "DONE"):
+        if line.endswith(reply):
+            prefix = line[:-len(reply)]
+            if prefix and all(character == "\ufffd" for character in prefix):
+                return reply
+    return line
+
+
 def read_line(device: serial.Serial, deadline: float) -> str:
     while time.monotonic() < deadline:
         raw = device.readline()
         if raw:
-            return raw.decode("ascii", errors="replace").strip()
+            return normalize_protocol_line(raw.decode("ascii", errors="replace").strip())
     raise TimeoutError("Timed out waiting for the ESP32.")
 
 
@@ -334,7 +370,7 @@ def load_restore_image(backup: Path) -> bytes:
     image = image_path.read_bytes()
     if len(image) != FULL_FLASH_BYTES:
         raise RuntimeError(
-            f"Restore requires an exact {FULL_FLASH_BYTES:,}-byte internal_flash.bin; got {len(image):,} bytes."
+            f"Restore requires an exact {FULL_FLASH_BYTES:,}-byte full internal-flash image; got {len(image):,} bytes."
         )
     return image
 
@@ -363,6 +399,7 @@ def restore(device: serial.Serial, backup_path: Path) -> int:
 
 
 def main() -> int:
+    configure_console()
     args = parse_args()
     with open_esp32(args.port, args.baud) as device:
         if args.probe:

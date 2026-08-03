@@ -1,8 +1,7 @@
-/* Launcher - select between Slideshow and Flappy Bird on one-button hardware.
+/* Configurable one-button launcher for one or two bundled apps.
  *
  * Menu:     tap changes selection; hold 650 ms, then release, starts it.
- * Slideshow: tap next photo; double-tap Normal/Boost; triple-tap menu.
- * Flappy:   standard Flappy controls; hold 2 s, then release, returns to menu.
+ * Games:    hold 2 s, then release, returns to menu.
  *
  * All application transitions force the coil output LOW before drawing the
  * next screen.  The embedded Flappy game otherwise retains its own behaviour.
@@ -14,25 +13,30 @@
 #include "button.h"
 #include "display.h"
 #include "system.h"
+#include <launcher_config.h>
+#if LAUNCHER_HAS_SLIDESHOW
 #include "slideshow.h"
+#endif
+#if LAUNCHER_HAS_TETRIS
+#include "tetris.h"
+#endif
 #include "vape_level.h"
 
+#if LAUNCHER_HAS_FLAPPY
 void flappy_module_init(void);
 void flappy_module_update(uint32_t frame);
 void flappy_module_wake(void);
+#endif
 
 #define MENU_START_HOLD_MS  650u
-#define FLAPPY_EXIT_HOLD_MS 2000u
+#define GAME_EXIT_HOLD_MS   2000u
 #define MENU_SLEEP_MS      60000u
 
-/* The factory MyWhiteRAZ firmware configures PB1 as an input with a pull-up
- * and polls it as an active-low charge-status signal.  This is a direct
- * CHRG# indication from the charge circuit, unlike the PA6 battery ADC. */
-#define CHARGER_PIN              1u
-#define CHARGER_SAMPLE_MS       100u
-#define CHARGER_CONFIRM_SAMPLES   3u
 #define BATTERY_SAMPLE_MS      1000u
 #define BATTERY_FILTER_SAMPLES    5u
+#define CABLE_SENSE_PIN            1u
+#define CABLE_SAMPLE_MS          100u
+#define CABLE_CONFIRM_SAMPLES      3u
 
 /* These values use the calibrated PA6 divider described in config.h.  The
  * previous linear 2.5-3.7 V display range made a normal Li-ion discharge
@@ -73,8 +77,8 @@ void flappy_module_wake(void);
 
 typedef enum {
     APP_MENU = 0,
-    APP_SLIDESHOW,
-    APP_FLAPPY,
+    APP_SLOT_1,
+    APP_SLOT_2,
 } active_app_t;
 
 /* 5x7, column-major glyphs for the launcher menu. */
@@ -108,13 +112,13 @@ static const uint8_t g_dot[5] = {0x00, 0x00, 0x60, 0x60, 0x00};
 static active_app_t g_active_app;
 static uint8_t g_menu_choice;
 static uint8_t g_menu_start_armed;
-static uint8_t g_flappy_exit_armed;
+static uint8_t g_game_exit_armed;
 static uint16_t g_battery_raw;
 static uint16_t g_battery_last_sample;
-static uint16_t g_charger_last_sample;
-static uint8_t g_battery_charging;
-static uint8_t g_charger_active_samples;
-static uint8_t g_charger_idle_samples;
+static uint16_t g_cable_last_sample;
+static uint8_t g_cable_present;
+static uint8_t g_cable_active_samples;
+static uint8_t g_cable_idle_samples;
 static uint8_t g_battery_low;
 static uint8_t g_battery_low_samples;
 static uint8_t g_battery_recover_samples;
@@ -361,7 +365,10 @@ static uint16_t battery_millivolts(uint16_t raw)
 
 uint8_t launcher_battery_percent(void)
 {
-    return battery_percent(g_battery_raw);
+    /* The embedded slideshow redraws only this small status band. Returning
+     * the hysteretic display value prevents one-percent ADC wobble from
+     * repeatedly repainting over the selected photo. */
+    return g_battery_display_percent;
 }
 
 uint8_t launcher_battery_low(void)
@@ -374,9 +381,9 @@ uint16_t launcher_battery_millivolts(void)
     return battery_millivolts(g_battery_raw);
 }
 
-uint8_t launcher_battery_charging(void)
+uint8_t launcher_cable_present(void)
 {
-    return g_battery_charging;
+    return g_cable_present;
 }
 
 static uint16_t battery_colour(uint8_t percent)
@@ -414,25 +421,26 @@ static void draw_voltage(uint16_t x, uint16_t y, uint16_t millivolts, uint16_t c
 }
 
 /* Called by the embedded Slideshow after it renders each photo. It deliberately
- * uses a small opaque status band so the level and charge state remain legible
- * over both light and dark photos. */
+ * uses one small opaque status line so the level remains legible over both
+ * light and dark photos without covering much of the selected image. */
 void launcher_draw_battery_status(void)
 {
     const uint8_t percent = launcher_battery_percent();
     const uint16_t colour = g_battery_low ? COL_RED : battery_colour(percent);
 
-    display_fill_rect(0u, 0u, LCD_WIDTH, 20u, COL_RGB(4, 5, 20));
+    display_fill_rect(0u, 0u, LCD_WIDTH, 11u, COL_RGB(4, 5, 20));
     draw_text(2u, 2u, "BATT", COL_RGB(160, 175, 230));
     draw_number(32u, 2u, percent, colour);
     draw_percent_suffix(32u, 2u, percent, colour);
     draw_voltage(65u, 2u, launcher_battery_millivolts(), colour);
-    draw_text(2u, 11u, launcher_battery_charging() ? "CHARGING" : "CHARGE IDLE",
-              launcher_battery_charging() ? COL_CYAN : COL_RGB(140, 145, 190));
+    if (launcher_cable_present()) {
+        draw_text(96u, 2u, "CABLE", COL_CYAN);
+    }
 }
 
 static void draw_battery_widget(void)
 {
-    const uint8_t percent = battery_percent(g_battery_raw);
+    const uint8_t percent = g_battery_display_percent;
     const uint16_t colour = battery_colour(percent);
     const uint16_t fill_width = (uint16_t)((uint32_t)percent * 108u / 100u);
 
@@ -441,11 +449,11 @@ static void draw_battery_widget(void)
         draw_text(8u, 22u, "LOW BATTERY", COL_RED);
         draw_number(83u, 22u, percent, COL_RED);
         draw_percent_suffix(83u, 22u, percent, COL_RED);
-    } else if (g_battery_charging) {
-        draw_text(8u, 22u, "CHARGING", COL_CYAN);
-        draw_number(62u, 22u, percent, colour);
-        draw_percent_suffix(62u, 22u, percent, colour);
-        draw_voltage(91u, 22u, launcher_battery_millivolts(), colour);
+    } else if (g_cable_present) {
+        draw_text(8u, 22u, "CABLE", COL_CYAN);
+        draw_number(44u, 22u, percent, colour);
+        draw_percent_suffix(44u, 22u, percent, colour);
+        draw_voltage(79u, 22u, launcher_battery_millivolts(), colour);
     } else {
         draw_text(8u, 22u, "BATTERY", COL_RGB(160, 175, 230));
         draw_number(53u, 22u, percent, colour);
@@ -483,38 +491,47 @@ static void draw_vape_widget(void)
     }
 }
 
-static uint8_t charger_read_active(void)
+/* PB1 is never driven by this firmware. This input + weak pull-up matches the
+ * previously working Launcher configuration, where a sustained low correlated
+ * with cable insertion on the tested RAZ board. It is a compatibility/cable
+ * observation only: it does not establish charge current or charge completion. */
+static void cable_sense_init(void)
 {
-    return (uint8_t)((GPIOB->IDR & (1UL << CHARGER_PIN)) == 0u);
+    RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;
+    GPIOB->MODER &= ~(3UL << (CABLE_SENSE_PIN * 2u));
+    GPIOB->PUPDR &= ~(3UL << (CABLE_SENSE_PIN * 2u));
+    GPIOB->PUPDR |=  (1UL << (CABLE_SENSE_PIN * 2u));
 }
 
-/* PB1 is sampled every 100 ms. Require 300 ms of a consistent state before
- * changing the label: the charger line is a real status input, but this avoids
- * momentary connector/noise transitions looking like a charge start or stop. */
-static uint8_t charger_update(void)
+static uint8_t cable_read_present(void)
 {
-    const uint8_t active = charger_read_active();
+    return (uint8_t)((GPIOB->IDR & (1UL << CABLE_SENSE_PIN)) == 0u);
+}
 
-    if (active == g_battery_charging) {
-        g_charger_active_samples = 0u;
-        g_charger_idle_samples = 0u;
+static uint8_t cable_update(void)
+{
+    const uint8_t present = cable_read_present();
+
+    if (present == g_cable_present) {
+        g_cable_active_samples = 0u;
+        g_cable_idle_samples = 0u;
         return 0u;
     }
 
-    if (active) {
-        g_charger_idle_samples = 0u;
-        g_charger_active_samples++;
-        if (g_charger_active_samples >= CHARGER_CONFIRM_SAMPLES) {
-            g_battery_charging = 1u;
-            g_charger_active_samples = 0u;
+    if (present) {
+        g_cable_idle_samples = 0u;
+        g_cable_active_samples++;
+        if (g_cable_active_samples >= CABLE_CONFIRM_SAMPLES) {
+            g_cable_present = 1u;
+            g_cable_active_samples = 0u;
             return 1u;
         }
     } else {
-        g_charger_active_samples = 0u;
-        g_charger_idle_samples++;
-        if (g_charger_idle_samples >= CHARGER_CONFIRM_SAMPLES) {
-            g_battery_charging = 0u;
-            g_charger_idle_samples = 0u;
+        g_cable_active_samples = 0u;
+        g_cable_idle_samples++;
+        if (g_cable_idle_samples >= CABLE_CONFIRM_SAMPLES) {
+            g_cable_present = 0u;
+            g_cable_idle_samples = 0u;
             return 1u;
         }
     }
@@ -523,19 +540,13 @@ static uint8_t charger_update(void)
 
 static void battery_init(void)
 {
-    /* Match the factory configuration for PB1: input, internal pull-up. */
-    RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;
-    GPIOB->MODER &= ~(3UL << (CHARGER_PIN * 2u));
-    GPIOB->PUPDR &= ~(3UL << (CHARGER_PIN * 2u));
-    GPIOB->PUPDR |=  (1UL << (CHARGER_PIN * 2u));
-
+    cable_sense_init();
     g_battery_raw = battery_read_median();
     g_battery_last_sample = ms_now();
-    g_charger_last_sample = g_battery_last_sample;
-    /* PB1 is pulled low by the charge controller while it is charging. */
-    g_battery_charging = charger_read_active();
-    g_charger_active_samples = 0u;
-    g_charger_idle_samples = 0u;
+    g_cable_last_sample = g_battery_last_sample;
+    g_cable_present = cable_read_present();
+    g_cable_active_samples = 0u;
+    g_cable_idle_samples = 0u;
     g_battery_low = (uint8_t)(g_battery_raw <= BATTERY_LOW_LOCK_RAW);
     g_battery_low_samples = 0u;
     g_battery_recover_samples = 0u;
@@ -543,16 +554,16 @@ static void battery_init(void)
     battery_apply_low_power_state();
 }
 
-/* Returns the smallest menu repaint needed after battery/charge state changes. */
+/* Returns the smallest menu repaint needed after a battery-state change. */
 static uint8_t battery_update(uint16_t now)
 {
     uint8_t widget_changed = 0u;
     uint8_t menu_changed = 0u;
     uint16_t sample;
 
-    if ((uint16_t)(now - g_charger_last_sample) >= CHARGER_SAMPLE_MS) {
-        g_charger_last_sample = now;
-        if (charger_update()) {
+    if ((uint16_t)(now - g_cable_last_sample) >= CABLE_SAMPLE_MS) {
+        g_cable_last_sample = now;
+        if (cable_update()) {
             widget_changed = 1u;
         }
     }
@@ -634,17 +645,22 @@ static void draw_menu(void)
         return;
     }
     draw_centered(65u, "SELECT APP", COL_RGB(165, 175, 235));
-    draw_card(76u, 0u, "SLIDESHOW");
-    draw_card(109u, 1u, "FLAPPY BIRD");
+#if LAUNCHER_SLOT_COUNT == 1u
+    draw_card(92u, 0u, LAUNCHER_SLOT_1_LABEL);
+    draw_card_selection(92u, 0u, 1u);
+#else
+    draw_card(76u, 0u, LAUNCHER_SLOT_1_LABEL);
+    draw_card(109u, 1u, LAUNCHER_SLOT_2_LABEL);
     draw_card_selection(76u, 0u, (uint8_t)(g_menu_choice == 0u));
     draw_card_selection(109u, 1u, (uint8_t)(g_menu_choice == 1u));
+#endif
 
     display_fill_rect(0u, 141u, LCD_WIDTH, 19u, COL_RGB(15, 12, 42));
     draw_centered(143u, "TAP CYCLES", COL_RGB(140, 145, 190));
     draw_centered(152u, "HOLD START", COL_RGB(140, 145, 190));
 }
 
-/* Returns 1 for Slideshow, 2 for Flappy, and 0 while still in the menu. */
+/* Returns the one-based selected slot, or zero while still in the menu. */
 static uint8_t update_menu(void)
 {
     if (g_battery_low) {
@@ -664,10 +680,93 @@ static uint8_t update_menu(void)
         return (uint8_t)(g_menu_choice + 1u);
     }
 
+#if LAUNCHER_SLOT_COUNT == 2u
     g_menu_choice ^= 1u;
     draw_card_selection(76u, 0u, (uint8_t)(g_menu_choice == 0u));
     draw_card_selection(109u, 1u, (uint8_t)(g_menu_choice == 1u));
+#endif
     return 0u;
+}
+
+static uint8_t active_module_kind(void)
+{
+    return (g_active_app == APP_SLOT_2)
+        ? LAUNCHER_SLOT_2_KIND : LAUNCHER_SLOT_1_KIND;
+}
+
+static void module_init(uint8_t kind)
+{
+    switch (kind) {
+#if LAUNCHER_HAS_TETRIS
+    case LAUNCHER_MODULE_TETRIS:
+        tetris_init();
+        break;
+#endif
+#if LAUNCHER_HAS_FLAPPY
+    case LAUNCHER_MODULE_FLAPPY:
+        flappy_module_init();
+        break;
+#endif
+#if LAUNCHER_HAS_SLIDESHOW
+    case LAUNCHER_MODULE_SLIDESHOW:
+        slideshow_init();
+        break;
+#endif
+    default:
+        break;
+    }
+}
+
+/* Returns non-zero when an app's own gesture requests the menu. */
+static uint8_t module_update(uint8_t kind, uint32_t frame)
+{
+    switch (kind) {
+#if LAUNCHER_HAS_TETRIS
+    case LAUNCHER_MODULE_TETRIS:
+        tetris_update(frame);
+        break;
+#endif
+#if LAUNCHER_HAS_FLAPPY
+    case LAUNCHER_MODULE_FLAPPY:
+        flappy_module_update(frame);
+        break;
+#endif
+#if LAUNCHER_HAS_SLIDESHOW
+    case LAUNCHER_MODULE_SLIDESHOW:
+        return slideshow_update(frame);
+#endif
+    default:
+        break;
+    }
+    return 0u;
+}
+
+static void module_wake(uint8_t kind)
+{
+    switch (kind) {
+#if LAUNCHER_HAS_TETRIS
+    case LAUNCHER_MODULE_TETRIS:
+        tetris_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_FLAPPY
+    case LAUNCHER_MODULE_FLAPPY:
+        flappy_module_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_SLIDESHOW
+    case LAUNCHER_MODULE_SLIDESHOW:
+        slideshow_wake();
+        break;
+#endif
+    default:
+        break;
+    }
+}
+
+static uint8_t module_uses_hold_exit(uint8_t kind)
+{
+    return (uint8_t)(kind != LAUNCHER_MODULE_SLIDESHOW);
 }
 
 static void enter_menu(void)
@@ -675,27 +774,20 @@ static void enter_menu(void)
     vape_level_coil_off();
     g_active_app = APP_MENU;
     g_menu_start_armed = 0u;
-    g_flappy_exit_armed = 0u;
+    g_game_exit_armed = 0u;
     app_set_sleep_timeout(MENU_SLEEP_MS);
     app_set_hold_reset(0u, (void (*)(void))0);
     draw_menu();
 }
 
-static void enter_slideshow(void)
+static void enter_slot(active_app_t slot)
 {
     vape_level_coil_off();
-    g_active_app = APP_SLIDESHOW;
+    g_active_app = slot;
+    g_game_exit_armed = 0u;
     app_set_sleep_timeout(MENU_SLEEP_MS);
     app_set_hold_reset(0u, (void (*)(void))0);
-    slideshow_init();
-}
-
-static void enter_flappy(void)
-{
-    vape_level_coil_off();
-    g_active_app = APP_FLAPPY;
-    g_flappy_exit_armed = 0u;
-    flappy_module_init();
+    module_init(active_module_kind());
 }
 
 void app_init(void)
@@ -729,32 +821,31 @@ void app_update(uint32_t frame)
         {
             const uint8_t launch = update_menu();
             if (launch == 1u) {
-                enter_slideshow();
+                enter_slot(APP_SLOT_1);
             } else if (launch == 2u) {
-                enter_flappy();
+                enter_slot(APP_SLOT_2);
             }
         }
         break;
 
-    case APP_SLIDESHOW:
-        if (slideshow_update(frame)) {
-            enter_menu();
-        }
-        break;
-
-    case APP_FLAPPY:
-        if (g_flappy_exit_armed) {
-            vape_level_coil_off();
-            if (button_just_released()) {
+    case APP_SLOT_1:
+    case APP_SLOT_2:
+        {
+            const uint8_t kind = active_module_kind();
+            if (g_game_exit_armed) {
+                vape_level_coil_off();
+                if (button_just_released()) {
+                    enter_menu();
+                }
+            } else if (module_uses_hold_exit(kind) && button_pressed() &&
+                       button_held_ms() >= GAME_EXIT_HOLD_MS) {
+                /* Stop immediately, then wait for release so the exit gesture
+                 * cannot become the first input after returning to the menu. */
+                vape_level_coil_off();
+                g_game_exit_armed = 1u;
+            } else if (module_update(kind, frame)) {
                 enter_menu();
             }
-        } else if (button_pressed() && button_held_ms() >= FLAPPY_EXIT_HOLD_MS) {
-            /* Stop immediately, then wait for release before entering the menu
-             * so the released exit gesture cannot start a new game. */
-            vape_level_coil_off();
-            g_flappy_exit_armed = 1u;
-        } else {
-            flappy_module_update(frame);
         }
         break;
 
@@ -770,10 +861,8 @@ void app_wake(void)
     battery_init();
     if (g_battery_low) {
         enter_menu();
-    } else if (g_active_app == APP_SLIDESHOW) {
-        slideshow_wake();
-    } else if (g_active_app == APP_FLAPPY) {
-        flappy_module_wake();
+    } else if (g_active_app == APP_SLOT_1 || g_active_app == APP_SLOT_2) {
+        module_wake(active_module_kind());
     } else {
         draw_menu();
     }

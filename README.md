@@ -28,7 +28,8 @@ physical ST-Link is required.
 
 | App | Ready-to-flash image | Notes |
 |---|---|---|
-| Launcher | [`launcher.bin`](<RAZ Vape Apps/Launcher/build/launcher.bin>) | Menu containing the embedded Slideshow and Flappy apps. |
+| Launcher | [`launcher.bin`](<RAZ Vape Apps/Launcher/build/launcher.bin>) | Configurable menu containing one or two selected apps. |
+| Tetris | [`tetris.bin`](<RAZ Vape Apps/Tetris/build/tetris.bin>) | Standalone one-button Tetris game. |
 | Slideshow | [`slideshow.bin`](<RAZ Vape Apps/Slideshow/build/slideshow.bin>) | Photo slideshow. Its source includes limited coil-output modes; review it carefully before use. |
 | Flappy | [`flappy.bin`](<RAZ Vape Apps/flappy/build/flappy.bin>) | Flappy-style application for the vape display. |
 
@@ -86,16 +87,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\start_raz_manage
 Select the ESP32's COM port in the window. The GUI excludes `COM1` from its
 port list because that is normally the legacy motherboard serial port. It can
 test the SWD connection, create a named (or timestamped) backup, restore a
-selected backup, flash Launcher/Slideshow/Flappy or a custom `.bin`, and display the persisted
+selected backup, flash Launcher/Tetris/Slideshow/Flappy or a custom `.bin`, and display the persisted
 internal-flash values. It runs the same `fast_flash.py` protocol as the
 command-line workflow and its log shows the exact ESP32 progress messages.
 
-When **Slideshow** or **Launcher** is selected, use **Choose up to 3 photos...**
-to select one to three `.bmp`, `.gif`, `.jpeg`, `.jpg`, `.png`, or `.webp`
-files. On Flash, the manager first builds a new image containing those photos,
-then performs the optional backup and flashes that freshly built image. For
-Launcher, the selected images replace only its built-in Slideshow and create
-`launcher-photos.bin`; the normal `launcher.bin` remains unchanged. Likewise,
+When **Launcher** is selected, choose one or two bundled apps from the two
+**Launcher bundle** boxes. The available modules are Tetris, Flappy, and
+Slideshow; choose **None** in the second box for a one-app launcher. The Manager
+builds `launcher-custom.bin` from that selection before it backs up and flashes.
+
+When standalone **Slideshow** is selected, or Launcher includes a Slideshow
+slot, use **Choose up to 3 photos...** to select one to three `.bmp`, `.gif`,
+`.jpeg`, `.jpg`, `.png`, or `.webp` files. On Flash, the manager first builds a
+new image containing those photos, then performs the optional backup and flashes
+that freshly built image. For Launcher the custom result is `launcher-custom.bin`;
+the normal `launcher.bin` remains unchanged. Likewise,
 a standalone Slideshow selection creates `slideshow-photos.bin` without
 replacing `slideshow.bin`. Clearing the selection returns to the bundled app
 image. The originals are only copied into a temporary build folder, and the
@@ -194,7 +200,7 @@ For Launcher:
 python tools\fast_flash.py --port COM7 --flash ".\RAZ Vape Apps\Launcher\build\launcher.bin"
 ```
 
-For Slideshow or Flappy, replace the image path with the corresponding `.bin`
+For Tetris, Slideshow, or Flappy, replace the image path with the corresponding `.bin`
 listed above. The flasher displays `ERASE`, `PROGRAM`, and `VERIFY` progress.
 Only `DONE` means the image verified and the ESP32 requested a target reset.
 
@@ -241,14 +247,32 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\restore_raz.ps1 
 The restore tool validates `manifest.json` when present, programs the complete
 flash image, verifies it, and requests a target reset only after success.
 
+You can also restore from `internal_flash.bin` by itself; the folder, RAM
+snapshot, and manifest are not required. The file must be an exact 65,536-byte
+full internal-flash image. The image is still verified by the ESP32 after it is
+written, but there is no pre-restore SHA-256 manifest check when the `.bin` is
+used alone:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\restore_raz.ps1 `
+  -Port COM7 `
+  -Backup "C:\path\to\internal_flash.bin" `
+  -Confirm
+```
+
+In the desktop manager, choose **Restore backup / .bin...**, select **Yes** for
+a standalone file, then choose the 64 KB `.bin` image.
+
 ## Launcher controls
 
-The bundled Launcher combines Slideshow and Flappy in one image:
+Launcher contains the one or two apps selected in the Manager:
 
 | Screen | Gesture | Action |
 |---|---|---|
 | Menu | Tap | Change selection |
 | Menu | Hold about 650 ms, then release | Start the selected app |
+| Tetris | One tap / two taps / 450 ms hold | Right / left / rotate |
+| Tetris | Hold about 2 seconds, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Triple-tap | Return to menu |
 | Flappy | Hold about 2 seconds, then release | Return to menu |

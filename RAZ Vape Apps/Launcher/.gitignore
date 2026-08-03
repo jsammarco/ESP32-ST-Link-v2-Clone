@@ -3,6 +3,8 @@
 !/build/launcher.bin
 /generated/photos.h
 /generated/vape_level_seed.h
+/generated/launcher_config.h
+/generated/launcher_build_config.bat
 /direct_flash.tcl
 /factory_vape_level.json
 __pycache__/

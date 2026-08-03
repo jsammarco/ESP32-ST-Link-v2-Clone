@@ -30,15 +30,19 @@ FLASH_TOOL = Path(__file__).resolve().with_name("fast_flash.py")
 SLIDESHOW_BUILD_TOOL = Path(__file__).resolve().with_name("build_slideshow_with_photos.py")
 LAUNCHER_BUILD_TOOL = Path(__file__).resolve().with_name("build_launcher_with_photos.py")
 BACKUP_ROOT = REPO_ROOT / "backups"
+FULL_FLASH_BYTES = 64 * 1024
 NV_LINE = re.compile(r"^NV\s+(\d+)\s+(NONE|[0-9A-Fa-f]{8})$")
 
 APPS = {
     "Launcher": REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher.bin",
+    "Tetris": REPO_ROOT / "RAZ Vape Apps" / "Tetris" / "build" / "tetris.bin",
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy.bin",
 }
 SLIDESHOW_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos.bin"
-LAUNCHER_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-photos.bin"
+LAUNCHER_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-custom.bin"
+LAUNCHER_BUNDLE_APPS = ("Tetris", "Flappy", "Slideshow")
+NO_SECOND_APP = "None"
 
 NV_LABELS = {
     0: "Puff count",
@@ -48,7 +52,7 @@ NV_LABELS = {
     4: "Slot wins",
     5: "Launcher heater use",
     6: "Launcher factory import",
-    7: "App 2 value",
+    7: "Tetris high score",
 }
 VAPE_EMPTY_TICKS = 340_000
 CUSTOM_APP = "Custom .bin..."
@@ -79,6 +83,7 @@ class RazManager(tk.Tk):
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.process: subprocess.Popen[str] | None = None
         self.current_action = ""
+        self.cancel_requested = False
         self.values: dict[int, int | None] = {}
         # A queued action is (label, command arguments, uses_fast_flash_tool).
         # Build steps run as ordinary local commands; hardware steps use the
@@ -90,8 +95,10 @@ class RazManager(tk.Tk):
         self.backup_before_flash_var = tk.BooleanVar(value=True)
         self.launcher_level_var = tk.StringVar(value="Preserve saved value")
         self.coil_profile_var = tk.StringVar(value="Current app default")
+        self.launcher_app_1_var = tk.StringVar(value="Tetris")
+        self.launcher_app_2_var = tk.StringVar(value="Flappy")
         self.custom_image_path: Path | None = None
-        self.custom_image_var = tk.StringVar(value="Bundled Launcher image selected.")
+        self.custom_image_var = tk.StringVar(value="Launcher will be built with Tetris + Flappy.")
         self.slideshow_photos: list[Path] = []
         self.slideshow_photo_var = tk.StringVar(
             value="No custom embedded Slideshow photos selected — the bundled app image will be used."
@@ -168,7 +175,7 @@ class RazManager(tk.Tk):
         backup_name.grid(row=1, column=1, sticky="ew", padx=(8, 0))
         backup = ttk.Button(write_frame, text="Back up current device", command=self.backup)
         backup.grid(row=1, column=2, sticky="w", padx=(8, 0))
-        restore = ttk.Button(write_frame, text="Restore backup...", command=self.restore)
+        restore = ttk.Button(write_frame, text="Restore backup / .bin...", command=self.restore)
         restore.grid(row=1, column=3, sticky="w", padx=(8, 0))
         self.action_widgets.extend([backup_name, backup, restore])
         ttk.Label(
@@ -187,32 +194,58 @@ class RazManager(tk.Tk):
         ttk.Label(write_frame, textvariable=self.custom_image_var, foreground="#444444", wraplength=610).grid(
             row=4, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
         )
-        ttk.Label(write_frame, text="Embedded photos:").grid(row=5, column=0, sticky="w", pady=(10, 0))
+
+        ttk.Label(write_frame, text="Launcher bundle:").grid(row=5, column=0, sticky="w", pady=(10, 0))
+        self.launcher_app_1_box = ttk.Combobox(
+            write_frame,
+            textvariable=self.launcher_app_1_var,
+            values=LAUNCHER_BUNDLE_APPS,
+            state="readonly",
+            width=14,
+        )
+        self.launcher_app_1_box.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.launcher_app_1_box.bind("<<ComboboxSelected>>", self.on_launcher_bundle_changed)
+
+        ttk.Label(write_frame, text="+", font=("Segoe UI", 11, "bold")).grid(
+            row=5, column=2, sticky="e", padx=(8, 0), pady=(10, 0)
+        )
+        self.launcher_app_2_box = ttk.Combobox(
+            write_frame,
+            textvariable=self.launcher_app_2_var,
+            values=(*LAUNCHER_BUNDLE_APPS, NO_SECOND_APP),
+            state="readonly",
+            width=14,
+        )
+        self.launcher_app_2_box.grid(row=5, column=3, sticky="w", padx=(6, 0), pady=(10, 0))
+        self.launcher_app_2_box.bind("<<ComboboxSelected>>", self.on_launcher_bundle_changed)
+        self.action_widgets.extend([self.launcher_app_1_box, self.launcher_app_2_box])
+
+        ttk.Label(write_frame, text="Embedded photos:").grid(row=6, column=0, sticky="w", pady=(10, 0))
         self.choose_slideshow_photos_button = ttk.Button(
             write_frame,
             text="Choose up to 3 photos...",
             command=self.choose_slideshow_photos,
         )
-        self.choose_slideshow_photos_button.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.choose_slideshow_photos_button.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
         self.clear_slideshow_photos_button = ttk.Button(
             write_frame,
             text="Clear photos",
             command=self.clear_slideshow_photos,
         )
-        self.clear_slideshow_photos_button.grid(row=5, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.clear_slideshow_photos_button.grid(row=6, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.extend([self.choose_slideshow_photos_button, self.clear_slideshow_photos_button])
         ttk.Label(write_frame, textvariable=self.slideshow_photo_var, foreground="#444444", wraplength=610).grid(
-            row=6, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
+            row=7, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
         )
         backup_before_flash = ttk.Checkbutton(
             write_frame,
             text="Create a backup before flashing",
             variable=self.backup_before_flash_var,
         )
-        backup_before_flash.grid(row=7, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        backup_before_flash.grid(row=8, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.append(backup_before_flash)
 
-        ttk.Label(write_frame, text="Launcher level:").grid(row=8, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(write_frame, text="Launcher level:").grid(row=9, column=0, sticky="w", pady=(10, 0))
         self.launcher_level_box = ttk.Combobox(
             write_frame,
             textvariable=self.launcher_level_var,
@@ -220,9 +253,9 @@ class RazManager(tk.Tk):
             state="readonly",
             width=25,
         )
-        self.launcher_level_box.grid(row=8, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.launcher_level_box.grid(row=9, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
 
-        ttk.Label(write_frame, text="Coil profile:").grid(row=9, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(write_frame, text="Coil profile:").grid(row=10, column=0, sticky="w", pady=(6, 0))
         self.coil_profile_box = ttk.Combobox(
             write_frame,
             textvariable=self.coil_profile_var,
@@ -230,7 +263,7 @@ class RazManager(tk.Tk):
             state="readonly",
             width=29,
         )
-        self.coil_profile_box.grid(row=9, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.coil_profile_box.grid(row=10, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.launcher_level_box, self.coil_profile_box])
         ttk.Label(
             write_frame,
@@ -238,13 +271,13 @@ class RazManager(tk.Tk):
                   "the battery or consumable. No profile increases the current app's output or cutoff."),
             foreground="#444444",
             wraplength=650,
-        ).grid(row=10, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
+        ).grid(row=11, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
         ttk.Label(
             write_frame,
             text="Always create a backup before flashing or restoring. Restore overwrites all internal flash and saved settings.",
             foreground="#7a3000",
             wraplength=650,
-        ).grid(row=11, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ).grid(row=12, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         values_frame = ttk.LabelFrame(main, text="Saved values", padding=10)
         values_frame.grid(row=5, column=0, columnspan=4, sticky="new", pady=(12, 0))
@@ -258,8 +291,18 @@ class RazManager(tk.Tk):
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        status = ttk.Label(main, textvariable=self.status_var, relief="sunken", anchor="w")
-        status.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        status_frame = ttk.Frame(main)
+        status_frame.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        status_frame.columnconfigure(0, weight=1)
+        status = ttk.Label(status_frame, textvariable=self.status_var, relief="sunken", anchor="w")
+        status.grid(row=0, column=0, sticky="ew")
+        self.cancel_button = ttk.Button(
+            status_frame,
+            text="Cancel / stop waiting",
+            command=self.cancel_current_operation,
+            state="disabled",
+        )
+        self.cancel_button.grid(row=0, column=1, sticky="e", padx=(8, 0))
 
         self.update_launcher_options()
         self.update_slideshow_photo_options()
@@ -279,18 +322,42 @@ class RazManager(tk.Tk):
         selection = self.app_var.get()
         if selection == CUSTOM_APP:
             self.choose_custom_image()
+        elif selection == "Launcher":
+            self.update_launcher_bundle_summary()
         else:
             self.custom_image_var.set(f"Bundled image: {APPS[selection]}")
         self.update_launcher_options()
         self.update_slideshow_photo_options()
 
+    def selected_launcher_apps(self) -> list[str]:
+        apps = [self.launcher_app_1_var.get()]
+        if self.launcher_app_2_var.get() != NO_SECOND_APP:
+            apps.append(self.launcher_app_2_var.get())
+        return apps
+
+    def update_launcher_bundle_summary(self) -> None:
+        apps = self.selected_launcher_apps()
+        if len(set(apps)) != len(apps):
+            self.custom_image_var.set("Choose two different Launcher apps.")
+        else:
+            self.custom_image_var.set("Launcher will be built with " + " + ".join(apps) + ".")
+
+    def on_launcher_bundle_changed(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        self.update_launcher_bundle_summary()
+        self.update_slideshow_photo_options()
+
     def update_launcher_options(self) -> None:
         state = "readonly" if self.app_var.get() == "Launcher" and self.process is None else "disabled"
+        self.launcher_app_1_box.configure(state=state)
+        self.launcher_app_2_box.configure(state=state)
         self.launcher_level_box.configure(state=state)
         self.coil_profile_box.configure(state=state)
 
     def update_slideshow_photo_options(self) -> None:
-        state = "normal" if self.app_var.get() in {"Slideshow", "Launcher"} and self.process is None else "disabled"
+        slideshow_available = self.app_var.get() == "Slideshow" or (
+            self.app_var.get() == "Launcher" and "Slideshow" in self.selected_launcher_apps()
+        )
+        state = "normal" if slideshow_available and self.process is None else "disabled"
         self.choose_slideshow_photos_button.configure(state=state)
         self.clear_slideshow_photos_button.configure(state=state)
 
@@ -316,7 +383,7 @@ class RazManager(tk.Tk):
         self.slideshow_photos = photos
         names = ", ".join(path.name for path in photos)
         self.slideshow_photo_var.set(f"{len(photos)} photo(s) selected: {names}")
-        target = "Launcher" if self.app_var.get() == "Launcher" else "Slideshow"
+        target = "Launcher Slideshow slot" if self.app_var.get() == "Launcher" else "Slideshow"
         self.status_var.set(f"Selected photos will be embedded when {target} is flashed.")
 
     def clear_slideshow_photos(self) -> None:
@@ -389,6 +456,7 @@ class RazManager(tk.Tk):
         self.append_log("\n> " + subprocess.list2cmdline(command))
         self.status_var.set(f"{action} is running. Do not unplug the ESP32 or target.")
         self.current_action = action
+        self.cancel_requested = False
         self.values = {} if action == "Reading saved values" else self.values
         self.set_actions_enabled(False)
         try:
@@ -407,7 +475,34 @@ class RazManager(tk.Tk):
             self.set_actions_enabled(True)
             messagebox.showerror("Could not start operation", str(exc))
             return
+        self.cancel_button.configure(state="normal")
         threading.Thread(target=self._read_process, args=(self.process,), daemon=True).start()
+
+    def cancel_current_operation(self) -> None:
+        process = self.process
+        if process is None:
+            return
+
+        action = self.current_action or "Current operation"
+        if not messagebox.askyesno(
+            "Cancel PC-side operation?",
+            f"Stop waiting for {action}?\n\n"
+            "If the ESP32 has already started erasing or programming, it continues locally. "
+            "Do not unplug the ESP32 or vape; wait for the vape to restart before trying another operation.",
+            icon="warning",
+        ):
+            return
+
+        self.cancel_requested = True
+        self.pending_steps.clear()
+        self.cancel_button.configure(state="disabled")
+        self.status_var.set(
+            f"Stopping the PC-side {action} process. Keep the ESP32 and vape connected if programming had started."
+        )
+        try:
+            process.terminate()
+        except OSError as exc:
+            self.append_log(f"Could not terminate the PC-side process: {exc}")
 
     def platformio_executable(self) -> str | None:
         for command in ("pio", "platformio"):
@@ -480,6 +575,16 @@ class RazManager(tk.Tk):
         action = self.current_action
         self.process = None
         self.current_action = ""
+        self.cancel_button.configure(state="disabled")
+        if self.cancel_requested:
+            self.cancel_requested = False
+            self.pending_steps.clear()
+            self.set_actions_enabled(True)
+            self.append_log(f"{action} cancelled on the PC.")
+            self.status_var.set(
+                "PC-side wait cancelled. If programming had started, keep hardware connected until the vape restarts."
+            )
+            return
         if return_code == 0:
             if self.pending_steps:
                 self.start_next_pending_step()
@@ -560,26 +665,71 @@ class RazManager(tk.Tk):
 
     def restore(self) -> None:
         initial = BACKUP_ROOT if BACKUP_ROOT.is_dir() else REPO_ROOT
-        backup = filedialog.askdirectory(title="Choose a RAZ backup folder", initialdir=initial)
-        if not backup:
+        source_kind = messagebox.askyesnocancel(
+            "Restore source",
+            "Restore from a standalone 64 KB internal-flash .bin file?\n\n"
+            "Yes: choose a .bin file\n"
+            "No: choose a standard backup folder\n"
+            "Cancel: do nothing",
+            icon="question",
+        )
+        if source_kind is None:
             return
-        if not (Path(backup) / "internal_flash.bin").is_file():
-            messagebox.showerror("Invalid backup", "Choose a backup folder containing internal_flash.bin.")
+
+        if source_kind:
+            selected = filedialog.askopenfilename(
+                title="Choose a 64 KB internal-flash backup image",
+                initialdir=initial,
+                filetypes=[("Internal-flash backup", "*.bin"), ("All files", "*.*")],
+            )
+        else:
+            selected = filedialog.askdirectory(title="Choose a RAZ backup folder", initialdir=initial)
+        if not selected:
             return
+
+        backup = Path(selected)
+        image_path = backup if source_kind else backup / "internal_flash.bin"
+        if not image_path.is_file():
+            expected = "a .bin file" if source_kind else "internal_flash.bin"
+            messagebox.showerror("Invalid backup", f"Choose {expected} containing the full internal-flash image.")
+            return
+        if image_path.stat().st_size != FULL_FLASH_BYTES:
+            messagebox.showerror(
+                "Invalid backup size",
+                f"Restore requires an exact {FULL_FLASH_BYTES:,}-byte full internal-flash image.\n\n"
+                f"Selected: {image_path.name} ({image_path.stat().st_size:,} bytes)",
+            )
+            return
+
+        source_note = (
+            "The folder manifest, when present, will be checked before restore."
+            if not source_kind
+            else "This standalone image has no manifest; the ESP32 will still program and verify all 64 KB."
+        )
         if not messagebox.askyesno(
             "Restore full backup?",
             "This erases and replaces all 64 KB of internal flash, including the installed app and saved settings.\n\n"
+            f"Selected: {image_path.name}\n{source_note}\n\n"
             "Restore the selected backup now?",
             icon="warning",
         ):
             return
-        self.run_tool("Restore", ["--restore", backup, "--confirm-restore"])
+        self.run_tool("Restore", ["--restore", str(backup), "--confirm-restore"])
 
     def flash_app(self) -> None:
         if self.selected_port() is None or self.process is not None:
             return
         selection = self.app_var.get()
-        building_selected_photos = selection in {"Slideshow", "Launcher"} and bool(self.slideshow_photos)
+        launcher_apps: list[str] = []
+        if selection == "Launcher":
+            launcher_apps = self.selected_launcher_apps()
+            if len(set(launcher_apps)) != len(launcher_apps):
+                messagebox.showerror("Duplicate Launcher app", "Choose two different apps for the Launcher bundle.")
+                return
+        slideshow_selected = selection == "Slideshow" or (
+            selection == "Launcher" and "Slideshow" in launcher_apps
+        )
+        building_selected_photos = slideshow_selected and bool(self.slideshow_photos)
         if selection == CUSTOM_APP:
             if self.custom_image_path is None or not self.custom_image_path.is_file():
                 if self.choose_custom_image() is None:
@@ -587,31 +737,50 @@ class RazManager(tk.Tk):
             image_path = self.custom_image_path
             if image_path is None:
                 return
+        elif selection == "Launcher":
+            image_path = LAUNCHER_CUSTOM_IMAGE
+        elif building_selected_photos:
+            image_path = SLIDESHOW_CUSTOM_IMAGE
         else:
-            if building_selected_photos:
-                image_path = LAUNCHER_CUSTOM_IMAGE if selection == "Launcher" else SLIDESHOW_CUSTOM_IMAGE
-            else:
-                image_path = APPS[selection]
-        if not image_path.is_file() and not building_selected_photos:
+            image_path = APPS[selection]
+        building_fresh_image = selection == "Launcher" or building_selected_photos
+        if not image_path.is_file() and not building_fresh_image:
             messagebox.showerror("Image not found", f"Cannot find:\n{image_path}\n\nBuild or copy the app image first.")
             return
 
         self.pending_steps.clear()
         pre_flash_steps: list[tuple[str, list[str], bool]] = []
         post_flash_steps: list[tuple[str, list[str], bool]] = []
-        photo_build_note = ""
-        if building_selected_photos:
-            build_tool = LAUNCHER_BUILD_TOOL if selection == "Launcher" else SLIDESHOW_BUILD_TOOL
-            target_name = "Launcher (embedded Slideshow)" if selection == "Launcher" else "Slideshow"
+        build_note = ""
+        if selection == "Launcher":
+            build_tool = LAUNCHER_BUILD_TOOL
+            if not build_tool.is_file():
+                messagebox.showerror("Missing Launcher builder", f"Cannot find:\n{build_tool}")
+                return
+            command = [sys.executable, "-u", str(build_tool), "--apps", *launcher_apps]
+            if building_selected_photos:
+                command.extend(["--photos", *(str(photo) for photo in self.slideshow_photos)])
+            build_note = f"\nA fresh Launcher containing {' + '.join(launcher_apps)} will be built before flashing.\n"
+            if building_selected_photos:
+                build_note += f"It will include {len(self.slideshow_photos)} selected Slideshow photo(s).\n"
+            pre_flash_steps.append(
+                (
+                    "Build Launcher: " + " + ".join(launcher_apps),
+                    command,
+                    False,
+                )
+            )
+        elif building_selected_photos:
+            build_tool = SLIDESHOW_BUILD_TOOL
             if not build_tool.is_file():
                 messagebox.showerror("Missing photo builder", f"Cannot find:\n{build_tool}")
                 return
-            photo_build_note = (
-                f"\n{len(self.slideshow_photos)} selected photo(s) will be built into a fresh {target_name} image before flashing.\n"
+            build_note = (
+                f"\n{len(self.slideshow_photos)} selected photo(s) will be built into a fresh Slideshow image before flashing.\n"
             )
             pre_flash_steps.append(
                 (
-                    f"Build {target_name} with selected photos",
+                    "Build Slideshow with selected photos",
                     [
                         sys.executable,
                         "-u",
@@ -639,12 +808,13 @@ class RazManager(tk.Tk):
         config_note = ""
         if selection == "Launcher":
             config_note = (
+                f"\nBundled apps: {' + '.join(launcher_apps)}\n"
                 f"\nLauncher level: {self.launcher_level_var.get()}\n"
                 f"Coil profile: {self.coil_profile_var.get()}\n"
             )
         if not messagebox.askyesno(
             "Flash application?",
-            f"{backup_note}Flash this image?\n\n{image_path.name}{photo_build_note}{config_note}\n"
+            f"{backup_note}Flash this image?\n\n{image_path.name}{build_note}{config_note}\n"
             "The app region will be erased and reprogrammed. The reserved 4 KB settings region is preserved.",
             icon="warning",
         ):
