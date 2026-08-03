@@ -19,6 +19,7 @@ if not defined LAUNCHER_APPS (
   set LAUNCHER_APPS="!LAUNCHER_APP_1!"
   if /I not "!LAUNCHER_APP_2!"=="None" set LAUNCHER_APPS=!LAUNCHER_APPS! "!LAUNCHER_APP_2!"
 )
+if not defined LAUNCHER_TITLE set "LAUNCHER_TITLE=ConsultingJoe.com"
 
 set CPU=-mcpu=cortex-m0 -mthumb
 set INC=-I%VAPORWARE%\include -Igenerated -Isrc
@@ -36,7 +37,7 @@ if not exist generated mkdir generated
 if not exist build mkdir build
 
 echo [config] Selecting bundled apps...
-%PYTHON% configure_launcher.py --apps %LAUNCHER_APPS% || goto :error
+%PYTHON% configure_launcher.py --title "!LAUNCHER_TITLE!" --apps %LAUNCHER_APPS% || goto :error
 call generated\launcher_build_config.bat || goto :error
 
 echo [0/12] Preparing factory vape seed...

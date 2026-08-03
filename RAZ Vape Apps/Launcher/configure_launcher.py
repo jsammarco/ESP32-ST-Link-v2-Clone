@@ -28,6 +28,8 @@ APP_CONFIG = {
 
 APP_CHOICES = "Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Doom, Flappy, or Slideshow"
 MAX_LAUNCHER_APPS = 9
+DEFAULT_LAUNCHER_TITLE = "ConsultingJoe.com"
+MAX_LAUNCHER_TITLE_CHARS = 21
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +40,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         metavar="APP",
         help=f"one to {MAX_LAUNCHER_APPS} of: {APP_CHOICES}",
+    )
+    parser.add_argument(
+        "--title",
+        default=DEFAULT_LAUNCHER_TITLE,
+        help=f"Launcher heading (default: {DEFAULT_LAUNCHER_TITLE})",
     )
     return parser.parse_args()
 
@@ -57,7 +64,22 @@ def normalize_apps(values: list[str]) -> list[tuple[str, str, str]]:
     return [APP_CONFIG[name] for name in names]
 
 
-def write_configuration(apps: list[tuple[str, str, str]]) -> None:
+def normalize_title(value: str) -> str:
+    title = value.strip()
+    if not title:
+        raise RuntimeError("Enter a Launcher title.")
+    if len(title) > MAX_LAUNCHER_TITLE_CHARS:
+        raise RuntimeError(
+            f"Launcher title must be {MAX_LAUNCHER_TITLE_CHARS} characters or fewer."
+        )
+    if any(not (character.isascii() and (character.isalnum() or character in " .-%")) for character in title):
+        raise RuntimeError(
+            "Launcher title can use letters, numbers, spaces, periods, hyphens, and %."
+        )
+    return title
+
+
+def write_configuration(apps: list[tuple[str, str, str]], title: str) -> None:
     GENERATED_DIR.mkdir(exist_ok=True)
     selected = {app[0] for app in apps}
     slot_kinds = ", ".join(app[1] for app in apps)
@@ -76,6 +98,7 @@ def write_configuration(apps: list[tuple[str, str, str]]) -> None:
         "#define LAUNCHER_MODULE_CHROME_DINO 7u\n"
         "#define LAUNCHER_MODULE_DOOM       8u\n"
         "#define LAUNCHER_MODULE_TOWER_STACKER 9u\n\n"
+        f'#define LAUNCHER_TITLE "{title}"\n'
         f"#define LAUNCHER_SLOT_COUNT {len(apps)}u\n"
         f"#define LAUNCHER_SLOT_KINDS {{ {slot_kinds} }}\n"
         f"#define LAUNCHER_SLOT_LABELS {{ {slot_labels} }}\n\n"
@@ -106,11 +129,13 @@ def write_configuration(apps: list[tuple[str, str, str]]) -> None:
     )
     BATCH_PATH.write_text(batch, encoding="ascii", newline="\r\n")
 
+    print(f"Launcher title: {title}")
     print("Launcher bundle: " + " + ".join(app[0] for app in apps))
 
 
 def main() -> int:
-    write_configuration(normalize_apps(parse_args().apps))
+    args = parse_args()
+    write_configuration(normalize_apps(args.apps), normalize_title(args.title))
     return 0
 
 

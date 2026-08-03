@@ -23,6 +23,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 from launcher_storage import (
     APP_SAFE_BYTES,
     BUNDLE_APPS as LAUNCHER_BUNDLE_APPS,
+    DEFAULT_LAUNCHER_TITLE,
     FLASH_TOTAL_BYTES,
     PHOTO_ASSET_BYTES,
     SETTINGS_RESERVED_BYTES,
@@ -30,6 +31,7 @@ from launcher_storage import (
     STREAMER_ESTIMATE_BYTES,
     projected_launcher_bytes,
     selected_image_bytes,
+    validate_launcher_title,
 )
 
 try:
@@ -149,6 +151,7 @@ class RazManager(tk.Tk):
         self.screen_stream_var = tk.BooleanVar(value=False)
         self.launcher_level_var = tk.StringVar(value="Preserve saved value")
         self.coil_profile_var = tk.StringVar(value="Current app default")
+        self.launcher_title_var = tk.StringVar(value=DEFAULT_LAUNCHER_TITLE)
         self.launcher_app_vars = {
             app: tk.BooleanVar(value=app in {"Tetris", "Flappy"})
             for app in LAUNCHER_BUNDLE_APPS
@@ -168,6 +171,7 @@ class RazManager(tk.Tk):
         self.action_widgets: list[tk.Widget] = []
 
         self._build_ui()
+        self.launcher_title_var.trace_add("write", self.on_launcher_title_changed)
         self.update_storage_bar()
         self.refresh_ports()
         self.after(75, self._drain_events)
@@ -295,9 +299,25 @@ class RazManager(tk.Tk):
             self.launcher_app_checks[app] = check
             self.action_widgets.append(check)
 
-        ttk.Label(write_frame, text="Flash storage:").grid(row=6, column=0, sticky="nw", pady=(12, 0))
+        ttk.Label(write_frame, text="Launcher title:").grid(row=6, column=0, sticky="w", pady=(10, 0))
+        self.launcher_title_entry = ttk.Entry(
+            write_frame,
+            textvariable=self.launcher_title_var,
+            width=28,
+        )
+        self.launcher_title_entry.grid(
+            row=6, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0)
+        )
+        ttk.Label(
+            write_frame,
+            text="21 characters max",
+            foreground="#444444",
+        ).grid(row=6, column=3, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.action_widgets.append(self.launcher_title_entry)
+
+        ttk.Label(write_frame, text="Flash storage:").grid(row=7, column=0, sticky="nw", pady=(12, 0))
         storage_frame = ttk.Frame(write_frame)
-        storage_frame.grid(row=6, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(10, 0))
+        storage_frame.grid(row=7, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(10, 0))
         storage_frame.columnconfigure(0, weight=1)
         self.storage_canvas = tk.Canvas(
             storage_frame,
@@ -316,29 +336,29 @@ class RazManager(tk.Tk):
             wraplength=610,
         ).grid(row=1, column=0, sticky="w", pady=(3, 0))
 
-        ttk.Label(write_frame, text="Embedded photos:").grid(row=7, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(write_frame, text="Embedded photos:").grid(row=8, column=0, sticky="w", pady=(10, 0))
         self.choose_slideshow_photos_button = ttk.Button(
             write_frame,
             text="Choose up to 3 photos...",
             command=self.choose_slideshow_photos,
         )
-        self.choose_slideshow_photos_button.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.choose_slideshow_photos_button.grid(row=8, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
         self.clear_slideshow_photos_button = ttk.Button(
             write_frame,
             text="Clear photos",
             command=self.clear_slideshow_photos,
         )
-        self.clear_slideshow_photos_button.grid(row=7, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.clear_slideshow_photos_button.grid(row=8, column=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.extend([self.choose_slideshow_photos_button, self.clear_slideshow_photos_button])
         ttk.Label(write_frame, textvariable=self.slideshow_photo_var, foreground="#444444", wraplength=610).grid(
-            row=8, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
+            row=9, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
         )
         backup_before_flash = ttk.Checkbutton(
             write_frame,
             text="Create a backup before flashing",
             variable=self.backup_before_flash_var,
         )
-        backup_before_flash.grid(row=9, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        backup_before_flash.grid(row=10, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.append(backup_before_flash)
 
         self.screen_stream_check = ttk.Checkbutton(
@@ -347,16 +367,16 @@ class RazManager(tk.Tk):
             variable=self.screen_stream_var,
             command=self.on_storage_option_changed,
         )
-        self.screen_stream_check.grid(row=10, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.screen_stream_check.grid(row=11, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(6, 0))
         self.open_stream_button = ttk.Button(
             write_frame,
             text="Open screen viewer",
             command=self.open_screen_viewer,
         )
-        self.open_stream_button.grid(row=10, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.open_stream_button.grid(row=11, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.screen_stream_check, self.open_stream_button])
 
-        ttk.Label(write_frame, text="Launcher level:").grid(row=11, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(write_frame, text="Launcher level:").grid(row=12, column=0, sticky="w", pady=(10, 0))
         self.launcher_level_box = ttk.Combobox(
             write_frame,
             textvariable=self.launcher_level_var,
@@ -364,9 +384,9 @@ class RazManager(tk.Tk):
             state="readonly",
             width=25,
         )
-        self.launcher_level_box.grid(row=11, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.launcher_level_box.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
 
-        ttk.Label(write_frame, text="Coil profile:").grid(row=12, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(write_frame, text="Coil profile:").grid(row=13, column=0, sticky="w", pady=(6, 0))
         self.coil_profile_box = ttk.Combobox(
             write_frame,
             textvariable=self.coil_profile_var,
@@ -374,7 +394,7 @@ class RazManager(tk.Tk):
             state="readonly",
             width=29,
         )
-        self.coil_profile_box.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.coil_profile_box.grid(row=13, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.launcher_level_box, self.coil_profile_box])
         ttk.Label(
             write_frame,
@@ -382,13 +402,13 @@ class RazManager(tk.Tk):
                   "the battery or consumable. No profile increases the current app's output or cutoff."),
             foreground="#444444",
             wraplength=650,
-        ).grid(row=13, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
+        ).grid(row=14, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
         ttk.Label(
             write_frame,
             text="Always create a backup before flashing or restoring. Restore overwrites all internal flash and saved settings.",
             foreground="#7a3000",
             wraplength=650,
-        ).grid(row=14, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ).grid(row=15, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         values_frame = ttk.LabelFrame(main, text="Saved values", padding=10)
         values_frame.grid(row=6, column=0, columnspan=4, sticky="new", pady=(12, 0))
@@ -473,6 +493,7 @@ class RazManager(tk.Tk):
             return (
                 projected_launcher_bytes(
                     apps,
+                    title=self.launcher_title_var.get().strip(),
                     screen_stream=screen_stream,
                     photo_count=photo_count,
                 ),
@@ -550,6 +571,10 @@ class RazManager(tk.Tk):
         self.update_slideshow_photo_options()
         self.update_storage_bar()
 
+    def on_launcher_title_changed(self, *_args: object) -> None:
+        self.built_storage_bytes = None
+        self.update_storage_bar()
+
     def on_storage_option_changed(self) -> None:
         self.built_storage_bytes = None
         self.update_storage_bar()
@@ -558,6 +583,7 @@ class RazManager(tk.Tk):
         launcher_state = "normal" if self.app_var.get() == "Launcher" and self.process is None else "disabled"
         for check in self.launcher_app_checks.values():
             check.configure(state=launcher_state)
+        self.launcher_title_entry.configure(state=launcher_state)
         combo_state = "readonly" if launcher_state == "normal" else "disabled"
         self.launcher_level_box.configure(state=combo_state)
         self.coil_profile_box.configure(state=combo_state)
@@ -1012,11 +1038,19 @@ class RazManager(tk.Tk):
             return
         selection = self.app_var.get()
         launcher_apps: list[str] = []
+        launcher_title = DEFAULT_LAUNCHER_TITLE
         if selection == "Launcher":
             launcher_apps = self.selected_launcher_apps()
             if not launcher_apps:
                 messagebox.showerror("Launcher app required", "Select at least one app for the Launcher bundle.")
                 return
+            try:
+                launcher_title = validate_launcher_title(self.launcher_title_var.get())
+            except ValueError as exc:
+                messagebox.showerror("Invalid Launcher title", str(exc))
+                return
+            if self.launcher_title_var.get() != launcher_title:
+                self.launcher_title_var.set(launcher_title)
         slideshow_selected = selection == "Slideshow" or (
             selection == "Launcher" and "Slideshow" in launcher_apps
         )
@@ -1060,13 +1094,17 @@ class RazManager(tk.Tk):
             if not local_tool_available(build_tool):
                 messagebox.showerror("Missing Launcher builder", f"Cannot find:\n{build_tool}")
                 return
-            command = local_tool_command(build_tool, ["--apps", *launcher_apps])
+            command = local_tool_command(
+                build_tool,
+                ["--title", launcher_title, "--apps", *launcher_apps],
+            )
             if building_selected_photos:
                 command.extend(["--photos", *(str(photo) for photo in self.slideshow_photos)])
             if stream_enabled:
                 command.append("--screen-stream")
             build_note = (
-                f"\nA fresh Launcher containing {len(launcher_apps)} app(s) will be built before flashing:\n"
+                f"\nA fresh Launcher titled {launcher_title!r} containing "
+                f"{len(launcher_apps)} app(s) will be built before flashing:\n"
                 + ", ".join(launcher_apps)
                 + "\n"
             )
@@ -1135,7 +1173,8 @@ class RazManager(tk.Tk):
         config_note = ""
         if selection == "Launcher":
             config_note = (
-                f"\nBundled apps: {' + '.join(launcher_apps)}\n"
+                f"\nLauncher title: {launcher_title}\n"
+                f"Bundled apps: {' + '.join(launcher_apps)}\n"
                 f"\nLauncher level: {self.launcher_level_var.get()}\n"
                 f"Coil profile: {self.coil_profile_var.get()}\n"
             )
@@ -1186,7 +1225,7 @@ def main() -> int:
                 print(f"ERROR: unknown internal tool {tool_name}")
                 return 2
             return tool_main()
-        except (OSError, RuntimeError, TimeoutError) as exc:
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
             print(f"ERROR: {exc}")
             return 1
     if "--screen-streamer" in sys.argv:

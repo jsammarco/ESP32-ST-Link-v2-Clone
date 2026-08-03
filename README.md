@@ -124,11 +124,13 @@ returns to the menu. See the POC guide for keyboard controls and parser limits.
 When **Launcher** is selected, choose one or more bundled apps from the
 **Launcher bundle** checkboxes. The available modules are Tetris, Pac-Man,
 Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Doom, Flappy, and
-Slideshow. The Manager shows a live flash-storage bar that includes selected
-photos and the optional screen streamer, then builds `launcher-custom.bin`
-before it backs up and flashes. The MCU has 64 KB total flash; application
-builds are limited to 60 KB so the final 4 KB remains reserved for saved
-values. The exact linked image size is checked again before flashing.
+Slideshow. The **Launcher title** box controls the menu heading and defaults to
+`ConsultingJoe.com`. The Manager shows a live flash-storage bar that includes
+the title, selected photos, and optional screen streamer, then builds
+`launcher-custom.bin` before it backs up and flashes. The MCU has 64 KB total
+flash; application builds are limited to 60 KB so the final 4 KB remains
+reserved for saved values. The exact linked image size is checked again before
+flashing.
 
 When standalone **Slideshow** is selected, or Launcher includes a Slideshow
 slot, use **Choose up to 3 photos...** to select one to three `.bmp`, `.gif`,
@@ -371,7 +373,8 @@ with standalone images remain available from the same Manager app list:
 | Chrome Dino | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
 | Tower Stacker | Press | Start, drop the moving floor, or retry after a miss |
 | Tower Stacker | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
-| Doom | One tap / two taps / hold | Turn right / turn left / walk forward |
+| Doom | One tap / two taps | Turn right after a short gesture window / turn left without a camera correction jump |
+| Doom | Hold about 0.15 seconds | Walk forward; keep holding for faster continuous movement |
 | Doom | Pressure (puff) sensor draw | Fire with bounded Normal coil output |
 | Doom | Hold about 2 seconds, then release | Return to Launcher menu |
 | Slideshow | Tap | Next photo |

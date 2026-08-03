@@ -7,9 +7,9 @@
  *
  * Controls
  *   PA3, active high draw-pressure signal: fire (game input only)
- *   one short PA7 tap:                    turn right
- *   two short PA7 taps:                   turn left
- *   PA7 held for 180 ms:                  walk forward; repeats while held
+ *   one short PA7 tap:                    turn right after a brief tap window
+ *   two short PA7 taps:                   turn left without an intermediate turn
+ *   PA7 held for 145 ms:                  walk forward; repeats while held
  *
  * The PA3 draw signal also drives the coil at the same time as the weapon.
  * It has an idle-low arm, a two-scan debounce, normal-mode 50% duty, an
@@ -32,11 +32,11 @@
 #define HUD_Y              128u
 #define Q12               4096
 
-#define BUTTON_HOLD_MS     180u
-#define DOUBLE_TAP_MS      450u
-#define TURN_STEP           20u
-#define WALK_STEP          460
-#define WALK_REPEAT_MS     145u
+#define BUTTON_HOLD_MS     145u
+#define DOUBLE_TAP_MS      300u
+#define TURN_STEP           14u
+#define WALK_STEP          390
+#define WALK_REPEAT_MS     100u
 #define SHOT_REPEAT_MS     185u
 #define COIL_MAX_MS       1800u
 #define RENDER_CHUNK_ROWS    8u
@@ -57,6 +57,7 @@
 #define C_IMP_DARK     COL_RGB( 64,  18,  14)
 #define C_IMP          COL_RGB(163,  46,  25)
 #define C_IMP_LIGHT    COL_RGB(224,  83,  34)
+#define C_IMP_HORN     COL_RGB(196, 151,  91)
 
 typedef struct {
     int32_t x;
@@ -70,6 +71,7 @@ typedef struct {
     int16_t y;
     int16_t width;
     int16_t height;
+    uint16_t depth;
     uint8_t hurt;
     uint8_t valid;
 } ScreenEnemy;
@@ -154,6 +156,32 @@ static uint8_t  g_coil_cutoff_latched;
  * input; both the weapon and its safeguarded coil session use this signal. */
 static uint8_t g_draw_armed;
 static uint8_t g_draw_high_scans;
+
+/* Original 12 x 20 demon art. It is scaled into the raycast view at runtime;
+ * spaces are transparent, D is the dark outline, B/L are body shades, H is
+ * horn/claw material, and Y is the eye glow. */
+static const char s_imp_art[20][13] = {
+    "  H      H  ",
+    " HH      HH ",
+    " HHD    DHH ",
+    "  DDDDDDDD  ",
+    " DDBBBBBBDD ",
+    "DDBBBBBBBBDD",
+    "DBBYYBBYYBBD",
+    "DBBDYBBYDBBD",
+    "DBBBBBBBBBBD",
+    "DBBBBDDBBBBD",
+    "DDBBBBBBBBDD",
+    "DBLLBBBBLLBD",
+    "DBLBBBBBBLBD",
+    "HDLBBBBBBLDH",
+    " DDDBBBBDDD ",
+    "  DDBBBBDD  ",
+    "  DBBDDBBD  ",
+    "  DBB  BBD  ",
+    " DDBD  DBDD ",
+    " HHD    DHH ",
+};
 
 /* Compact 3 x 5 UI font: A-Z, 0-9, colon, dash. */
 static const uint8_t s_font[38][5] = {
@@ -466,6 +494,7 @@ static void project_enemies(void)
         sprite->y = (int16_t)((int)(VIEW_H / 2u) - height / 2);
         sprite->width = (int16_t)width;
         sprite->height = (int16_t)height;
+        sprite->depth = (forward >> 12) > 65535 ? 65535u : (uint16_t)(forward >> 12);
         sprite->hurt = (enemy->health == 1u) ? 1u : 0u;
         sprite->valid = (sprite->x >= 1 && sprite->x + sprite->width < (int)VIEW_PIXELS_W - 1 &&
                          sprite->y >= 1 && sprite->y + sprite->height < (int)VIEW_H) ? 1u : 0u;
@@ -500,23 +529,32 @@ static void draw_imp_chunk(const ScreenEnemy *sprite, uint16_t row_start, uint8_
     int y = sprite->y;
     int width = sprite->width;
     int height = sprite->height;
-    int head_h = height / 2;
-    int horn_w = (width > 10) ? width / 4 : 2;
     uint16_t body = sprite->hurt ? COL_RGB(255, 205, 66) : C_IMP;
+    uint16_t light = sprite->hurt ? COL_WHITE : C_IMP_LIGHT;
+    int top = y > (int)row_start ? y : (int)row_start;
+    int bottom = y + height;
+    int yy;
 
-    chunk_fill_rect(row_start, rows, x, y + head_h / 4, horn_w, head_h / 3, C_IMP_LIGHT);
-    chunk_fill_rect(row_start, rows, x + width - horn_w, y + head_h / 4,
-                    horn_w, head_h / 3, C_IMP_LIGHT);
-    chunk_fill_rect(row_start, rows, x + horn_w / 2, y, width - horn_w, head_h, C_IMP_DARK);
-    chunk_fill_rect(row_start, rows, x + horn_w / 2 + 1, y + 1,
-                    width - horn_w - 2, head_h - 3, body);
-    chunk_fill_rect(row_start, rows, x + width / 3, y + head_h / 2, 2, 2, COL_YELLOW);
-    chunk_fill_rect(row_start, rows, x + (width * 2) / 3 - 2, y + head_h / 2,
-                    2, 2, COL_YELLOW);
-    chunk_fill_rect(row_start, rows, x + width / 4, y + head_h,
-                    width / 2, height - head_h, C_IMP_DARK);
-    chunk_fill_rect(row_start, rows, x + width / 4 + 1, y + head_h + 1,
-                    width / 2 - 2, height - head_h - 2, body);
+    if (bottom > (int)(row_start + rows)) bottom = row_start + rows;
+    for (yy = top; yy < bottom; yy++) {
+        int source_y = ((yy - y) * 20) / height;
+        int xx;
+        for (xx = x; xx < x + width; xx++) {
+            int source_x = ((xx - x) * 12) / width;
+            char pixel = s_imp_art[source_y][source_x];
+            uint8_t ray_column = (uint8_t)(xx >> 1);
+            uint16_t color;
+
+            if (pixel == ' ' || ray_column >= VIEW_W ||
+                (uint32_t)sprite->depth > (uint32_t)g_zbuf[ray_column] + 700u) continue;
+            if (pixel == 'B') color = body;
+            else if (pixel == 'L') color = light;
+            else if (pixel == 'H') color = C_IMP_HORN;
+            else if (pixel == 'Y') color = sprite->hurt ? COL_RED : COL_YELLOW;
+            else color = C_IMP_DARK;
+            g_frame_buffer[(uint32_t)(yy - row_start) * VIEW_PIXELS_W + xx] = color;
+        }
+    }
 }
 
 static void build_world_chunk(uint16_t row_start, uint8_t rows)
@@ -783,16 +821,17 @@ static uint8_t handle_button(uint16_t now)
     if (button_just_pressed()) {
         g_press_started = now;
         g_long_press = 0u;
-        /* The first completed click already turned right.  A quick second
-         * press applies two left steps, leaving the player one left step from
-         * the original heading and making double-tap feedback immediate. */
+        /* Wait to resolve the first tap. This avoids the old right-then-left
+         * camera jump when the player intended a double-tap. */
         if (g_tap_pending &&
             (uint16_t)(now - g_tap_started) <= DOUBLE_TAP_MS) {
-            g_angle = (uint8_t)(g_angle - (TURN_STEP * 2u));
-            g_tap_pending = 0u;
             g_second_tap = 1u;
-            g_scene_dirty = 1u;
         } else {
+            if (g_tap_pending) {
+                g_angle = (uint8_t)(g_angle + TURN_STEP);
+                g_tap_pending = 0u;
+                g_scene_dirty = 1u;
+            }
             g_second_tap = 0u;
         }
     }
@@ -801,6 +840,13 @@ static uint8_t handle_button(uint16_t now)
         (uint16_t)(now - g_press_started) >= BUTTON_HOLD_MS) {
         if (!g_long_press || (uint16_t)(now - g_last_walk) >= WALK_REPEAT_MS) {
             g_long_press = 1u;
+            /* Tap-then-hold means a completed right tap followed by walking,
+             * not an abandoned double-tap gesture. */
+            if (g_second_tap) {
+                g_angle = (uint8_t)(g_angle + TURN_STEP);
+                g_second_tap = 0u;
+                g_scene_dirty = 1u;
+            }
             g_tap_pending = 0u;
             g_short_clicks = 0u;
             g_last_walk = now;
@@ -810,11 +856,13 @@ static uint8_t handle_button(uint16_t now)
 
     if (button_just_released()) {
         if (!g_long_press) {
-            if (!g_second_tap) {
-                g_angle = (uint8_t)(g_angle + TURN_STEP);
+            if (g_second_tap) {
+                g_angle = (uint8_t)(g_angle - TURN_STEP);
+                g_tap_pending = 0u;
+                g_scene_dirty = 1u;
+            } else {
                 g_tap_pending = 1u;
                 g_tap_started = now;
-                g_scene_dirty = 1u;
             }
 
             if ((uint16_t)(now - g_last_short_click) > SCREEN_OFF_WINDOW) {
@@ -823,6 +871,7 @@ static uint8_t handle_button(uint16_t now)
             g_last_short_click = now;
             if (++g_short_clicks >= SCREEN_OFF_CLICKS) {
                 g_short_clicks = 0u;
+                g_tap_pending = 0u;
                 screen_off = 1u;
             }
         }
@@ -831,6 +880,8 @@ static uint8_t handle_button(uint16_t now)
 
     if (g_tap_pending && (uint16_t)(now - g_tap_started) > DOUBLE_TAP_MS) {
         g_tap_pending = 0u;
+        g_angle = (uint8_t)(g_angle + TURN_STEP);
+        g_scene_dirty = 1u;
     }
     return screen_off;
 }

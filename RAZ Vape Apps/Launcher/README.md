@@ -4,7 +4,8 @@ One firmware image containing a launcher menu and one or more build-selected app
 Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Doom,
 Flappy Bird, and Slideshow can be included in any combination that fits. The
 RAZ ESP32 Manager builds a fresh image from its Launcher bundle checkboxes
-before flashing.
+before flashing. Its Launcher title box sets the heading (default
+`ConsultingJoe.com`) for that build.
 
 ## Controls
 
@@ -32,8 +33,8 @@ before flashing.
 | Chrome Dino | Hold 2 s, then release | Return to menu |
 | Tower Stacker | Press | Start, drop the moving floor, or retry after a miss |
 | Tower Stacker | Hold 2 s, then release | Return to menu |
-| Doom | One tap / two taps | Turn right / turn left |
-| Doom | Hold about 0.2 seconds | Walk forward; keep holding to continue |
+| Doom | One tap / two taps | Turn right after a 0.3 s gesture window / turn left without an intermediate camera jump |
+| Doom | Hold about 0.15 seconds | Walk forward; keep holding for responsive continuous movement |
 | Doom | Draw from mouthpiece | Fire with bounded Normal coil output |
 | Doom | Hold 2 s, then release | Return to menu |
 | Slideshow | Tap | Next photo |
