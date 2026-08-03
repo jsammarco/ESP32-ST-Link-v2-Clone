@@ -68,7 +68,7 @@ foreach ($command in $probeCommands) {
 }
 & $OpenOcdPath @probeArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "OpenOCD could not communicate with the target. Check GND, wake the vape, then swap only CC1 and CC2. Nothing was written."
+    throw "OpenOCD could not communicate with the target. The ESP32 bridge already tried both GPIO25/GPIO26 SWD mappings. Check GND, wake the vape, and keep the CC wires short. Nothing was written."
 }
 
 if ($ProbeOnly) {

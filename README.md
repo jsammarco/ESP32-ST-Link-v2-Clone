@@ -55,16 +55,24 @@ On the RAZ hardware, the USB-C CC contacts are used as SWD pins:
 
 | ESP32 DevKit V1 | USB-C male breakout | Signal |
 |---|---|---|
-| `GPIO25` through 100 ohm | `CC1` | SWDIO |
-| `GPIO26` through 100 ohm | `CC2` | SWCLK |
+| `GPIO25` through 100 ohm | `CC1` | SWCLK on attempt 1; SWDIO on attempt 2 |
+| `GPIO26` through 100 ohm | `CC2` | SWDIO on attempt 1; SWCLK on attempt 2 |
 | `GND` | `GND` | Common ground |
 
 Do **not** connect ESP32 `3V3`, `5V`, `VBUS`, `D+`, or `D-` to the vape. The
 target powers its own MCU. `GPIO27` is reserved for optional reset support and
 is not required.
 
-If the probe cannot read the target, verify the common ground, wake the vape,
-and swap only the CC1/CC2 wires. Keep the wires short.
+The current ESP32 firmware tries the two possible assignments automatically for
+every direct probe/flash/backup/restore operation:
+
+1. `SWDIO = GPIO26`, `SWCLK = GPIO25`
+2. `SWDIO = GPIO25`, `SWCLK = GPIO26` (only if attempt 1 cannot read DPIDR)
+
+Keep the two wires connected as shown; do not manually swap CC1/CC2 between
+attempts. The optional OpenOCD serial bridge also runs the same read-only
+auto-probe when OpenOCD connects. If both mappings fail, verify common ground,
+wake the vape, and keep the wires short.
 
 ## Desktop GUI
 
@@ -264,7 +272,7 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 | Symptom | What to check |
 |---|---|
 | `Access is denied` for `COM7` | Close PlatformIO Monitor, the serial bridge, and any other serial program. |
-| `ERR PROBE` or no `IDR` response | Verify GND, wake the target, then swap CC1 and CC2. |
+| `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
 | `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain the 100 ohm resistors, charge the device, and rerun the read-only probe before retrying. |
 | Screen does not return immediately after `DONE` | Verify the latest ESP32 firmware was uploaded, then power-cycle/reset the target before attempting another flash. |
 

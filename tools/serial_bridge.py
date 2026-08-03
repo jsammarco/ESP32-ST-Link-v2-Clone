@@ -81,6 +81,27 @@ def proxy_one_client(device: serial.Serial, client: socket.socket) -> None:
         device.reset_input_buffer()
 
 
+def select_swd_pin_map(device: serial.Serial) -> str:
+    """Ask current ESP32 firmware to probe its two SWD pin assignments.
+
+    The direct probe leaves the successful mapping selected. Running this just
+    before OpenOCD connects gives the optional remote_bitbang path the same
+    automatic GPIO26/GPIO25 then GPIO25/GPIO26 fallback as fast_flash.py.
+    It never halts or writes the target.
+    """
+    device.reset_input_buffer()
+    device.write(b"I")
+    device.flush()
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        response = device.readline()
+        if response:
+            device.reset_input_buffer()
+            return response.decode("ascii", errors="replace").strip()
+    device.reset_input_buffer()
+    return "no response"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="ESP32 serial port, e.g. COM5")
@@ -132,6 +153,11 @@ def main() -> None:
                 print(f"OpenOCD connected from {address[0]}:{address[1]}")
                 client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 client.settimeout(0.25)
+                pin_map_probe = select_swd_pin_map(device)
+                if pin_map_probe.startswith("IDR "):
+                    print("ESP32 automatic SWD pin-map probe succeeded.")
+                else:
+                    print(f"ESP32 automatic SWD pin-map probe: {pin_map_probe}")
                 proxy_one_client(device, client)
                 print("OpenOCD disconnected")
 

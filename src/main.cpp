@@ -8,9 +8,14 @@
  * localhost TCP endpoint for OpenOCD.
  *
  * Target wiring (through a USB-C male breakout plugged into the RAZ):
- *   GPIO 25 -- 100 ohm -- CC1 (normally SWDIO; swap with CC2 if needed)
- *   GPIO 26 -- 100 ohm -- CC2 (normally SWCLK; swap with CC1 if needed)
+ *   GPIO 25 -- 100 ohm -- either CC contact
+ *   GPIO 26 -- 100 ohm -- the other CC contact
  *   GND ----------------- GND
+ *
+ * Before a direct probe/program operation, the firmware tries GPIO26 as
+ * SWDIO with GPIO25 as SWCLK. If it cannot read the target DPIDR, it retries
+ * with GPIO25 as SWDIO and GPIO26 as SWCLK. Do not swap the physical wires
+ * between attempts.
  *
  * Never connect the ESP32 3V3, 5V, VBUS, D+, or D- pins to the vape.
  */
@@ -20,8 +25,16 @@
 
 namespace {
 
-constexpr gpio_num_t SWDIO_PIN = GPIO_NUM_25;
-constexpr gpio_num_t SWCLK_PIN = GPIO_NUM_26;
+struct SwdPinMap {
+  gpio_num_t swdio;
+  gpio_num_t swclk;
+};
+
+constexpr SwdPinMap SWD_PIN_MAPS[] = {
+    {GPIO_NUM_26, GPIO_NUM_25},  // Attempt 1: requested default
+    {GPIO_NUM_25, GPIO_NUM_26},  // Attempt 2: swapped
+};
+constexpr uint8_t SWD_PIN_MAP_COUNT = sizeof(SWD_PIN_MAPS) / sizeof(SWD_PIN_MAPS[0]);
 constexpr gpio_num_t NRST_PIN  = GPIO_NUM_27;  // Optional; leave unwired by default.
 constexpr int LED_PIN = 2;
 
@@ -82,7 +95,11 @@ constexpr uint32_t AP_CSW_32BIT_SINGLE_INC = 0x23000052;
 
 bool swdio_is_output = false;
 bool last_swdio_level = false;
+gpio_num_t swdio_pin = SWD_PIN_MAPS[0].swdio;
+gpio_num_t swclk_pin = SWD_PIN_MAPS[0].swclk;
 uint8_t fast_image[FAST_IMAGE_MAX_BYTES];
+
+void set_swdio_direction(bool output);
 
 void wait_half_cycle() {
   if (HALF_CYCLE_US != 0) {
@@ -90,15 +107,40 @@ void wait_half_cycle() {
   }
 }
 
+void select_swd_pin_map(uint8_t map_index) {
+  if (map_index >= SWD_PIN_MAP_COUNT) {
+    map_index = 0;
+  }
+
+  // Tri-state both old outputs before changing roles. This avoids momentarily
+  // driving either CC/SWD net while the two ESP32 pins are being swapped.
+  gpio_set_direction(swdio_pin, GPIO_MODE_INPUT);
+  gpio_set_direction(swclk_pin, GPIO_MODE_INPUT);
+
+  swdio_pin = SWD_PIN_MAPS[map_index].swdio;
+  swclk_pin = SWD_PIN_MAPS[map_index].swclk;
+  swdio_is_output = false;
+  last_swdio_level = true;
+
+  gpio_set_drive_capability(swdio_pin, GPIO_DRIVE_CAP_3);
+  gpio_set_drive_capability(swclk_pin, GPIO_DRIVE_CAP_3);
+  gpio_set_pull_mode(swdio_pin, GPIO_FLOATING);
+  gpio_set_pull_mode(swclk_pin, GPIO_FLOATING);
+  gpio_set_direction(swclk_pin, GPIO_MODE_OUTPUT);
+  gpio_set_level(swclk_pin, 0);
+  set_swdio_direction(true);
+  gpio_set_level(swdio_pin, 1);
+}
+
 void set_swdio_direction(bool output) {
   if (swdio_is_output == output) {
     return;
   }
 
-  gpio_set_direction(SWDIO_PIN, output ? GPIO_MODE_OUTPUT : GPIO_MODE_INPUT);
+  gpio_set_direction(swdio_pin, output ? GPIO_MODE_OUTPUT : GPIO_MODE_INPUT);
   swdio_is_output = output;
   if (output) {
-    gpio_set_level(SWDIO_PIN, last_swdio_level ? 1 : 0);
+    gpio_set_level(swdio_pin, last_swdio_level ? 1 : 0);
   }
 }
 
@@ -110,11 +152,11 @@ void write_swd_pins(bool clock, bool data) {
   // DP-IDR reads fail. gpio_set_level also updates the ESP32 output latch
   // while the pin is input, which OpenOCD uses to prepare a clean turnaround.
   last_swdio_level = data;
-  gpio_set_level(SWDIO_PIN, data ? 1 : 0);
+  gpio_set_level(swdio_pin, data ? 1 : 0);
 
   // Keep data stable before changing SWCLK so the target samples it on the
   // rising clock edge.
-  gpio_set_level(SWCLK_PIN, clock ? 1 : 0);
+  gpio_set_level(swclk_pin, clock ? 1 : 0);
   wait_half_cycle();
 }
 
@@ -128,18 +170,18 @@ void set_reset(bool asserted) {
 void send_sample() {
   // Let SWDIO settle after a target-to-host turnaround before sampling it.
   wait_half_cycle();
-  const char sample = gpio_get_level(SWDIO_PIN) ? '1' : '0';
+  const char sample = gpio_get_level(swdio_pin) ? '1' : '0';
   Serial.write(static_cast<uint8_t>(sample));
 }
 
 void end_transaction() {
-  gpio_set_level(SWCLK_PIN, 0);
+  gpio_set_level(swclk_pin, 0);
   // The next OpenOCD session begins with an SWD line-reset sequence before it
   // sends an explicit direction command. Keep the idle line driven high so
   // that sequence is valid; normal target reads still release it via 'o'.
   last_swdio_level = true;
   set_swdio_direction(true);
-  gpio_set_level(SWDIO_PIN, 1);
+  gpio_set_level(swdio_pin, 1);
   digitalWrite(LED_PIN, LOW);
 }
 
@@ -153,19 +195,19 @@ void wait_fast_half_cycle() {
 void fast_write_bit(bool value) {
   set_swdio_direction(true);
   last_swdio_level = value;
-  gpio_set_level(SWDIO_PIN, value ? 1 : 0);
-  gpio_set_level(SWCLK_PIN, 0);
+  gpio_set_level(swdio_pin, value ? 1 : 0);
+  gpio_set_level(swclk_pin, 0);
   wait_fast_half_cycle();
-  gpio_set_level(SWCLK_PIN, 1);
+  gpio_set_level(swclk_pin, 1);
   wait_fast_half_cycle();
 }
 
 bool fast_read_bit() {
   set_swdio_direction(false);
-  gpio_set_level(SWCLK_PIN, 0);
+  gpio_set_level(swclk_pin, 0);
   wait_fast_half_cycle();
-  const bool value = gpio_get_level(SWDIO_PIN) != 0;
-  gpio_set_level(SWCLK_PIN, 1);
+  const bool value = gpio_get_level(swdio_pin) != 0;
+  gpio_set_level(swclk_pin, 1);
   wait_fast_half_cycle();
   return value;
 }
@@ -246,7 +288,7 @@ bool fast_swd_transfer(bool ap, bool read, uint8_t address, uint32_t write_value
     fast_input_turnaround();
     last_swdio_level = true;
     set_swdio_direction(true);
-    gpio_set_level(SWDIO_PIN, 1);
+    gpio_set_level(swdio_pin, 1);
     if (parity != odd_parity(value)) {
       return false;
     }
@@ -259,7 +301,7 @@ bool fast_swd_transfer(bool ap, bool read, uint8_t address, uint32_t write_value
   // Host-to-target turnaround. Preload the first data bit while high-Z, then
   // drive it on the first actual data cycle, matching OpenOCD's bitbang path.
   last_swdio_level = (write_value & 1U) != 0;
-  gpio_set_level(SWDIO_PIN, last_swdio_level ? 1 : 0);
+  gpio_set_level(swdio_pin, last_swdio_level ? 1 : 0);
   fast_input_turnaround();
   set_swdio_direction(true);
   fast_write_bits(write_value, 32);
@@ -303,11 +345,23 @@ bool fast_ap_read(uint8_t address, uint32_t *value) {
          fast_dp_read(DP_RDBUFF, value);
 }
 
-bool fast_enable_debug(uint32_t *dpidr) {
+bool fast_read_dpidr(uint32_t *dpidr) {
   fast_line_reset_and_select_swd();
-  if (!fast_dp_read(0x0, dpidr) || *dpidr == 0 || *dpidr == 0xFFFFFFFF) {
-    return false;
+  return fast_dp_read(0x0, dpidr) && *dpidr != 0 && *dpidr != 0xFFFFFFFF;
+}
+
+bool fast_enable_debug(uint32_t *dpidr) {
+  // Start every operation from the requested primary map. Switch only when
+  // that map cannot read the SW-DP ID, then leave the working map active for
+  // the rest of the command (flash, backup, restore, or OpenOCD pre-probe).
+  select_swd_pin_map(0);
+  if (!fast_read_dpidr(dpidr)) {
+    select_swd_pin_map(1);
+    if (!fast_read_dpidr(dpidr)) {
+      return false;
+    }
   }
+
   if (!fast_dp_write(DP_ABORT, 0x1EU) ||
       !fast_dp_write(DP_CTRL_STAT, 0x50000000U)) {
     return false;
@@ -892,17 +946,7 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  gpio_set_direction(SWCLK_PIN, GPIO_MODE_OUTPUT);
-  gpio_set_drive_capability(SWCLK_PIN, GPIO_DRIVE_CAP_3);
-  gpio_set_level(SWCLK_PIN, 0);
-  gpio_set_drive_capability(SWDIO_PIN, GPIO_DRIVE_CAP_3);
-  gpio_set_pull_mode(SWDIO_PIN, GPIO_FLOATING);
-  gpio_set_pull_mode(SWCLK_PIN, GPIO_FLOATING);
-  // bitbang_swd starts with a line-reset before any 'O' direction command.
-  // Its required idle value is a driven logic high, not high impedance.
-  last_swdio_level = true;
-  set_swdio_direction(true);
-  gpio_set_level(SWDIO_PIN, 1);
+  select_swd_pin_map(0);
   gpio_set_direction(NRST_PIN, GPIO_MODE_OUTPUT);
   set_reset(false);
 }

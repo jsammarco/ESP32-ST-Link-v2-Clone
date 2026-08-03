@@ -38,8 +38,10 @@ output with a 0.9 s hard cutoff.
 
 The menu takes five PA6 ADC readings per update, uses their median, and applies a
 small smoothing filter before mapping the result through a single-cell Li-ion voltage
-curve. This makes the displayed percentage steadier and avoids the old linear
-2.5–3.7 V scale, which made normal battery discharge look jumpy.
+curve. It shows both the estimated percentage and the PA6-derived cell voltage (for
+example, `4.08V`), so the estimate can be checked against the measured voltage rather
+than treated as an exact fuel gauge. This avoids the old linear 2.5–3.7 V scale, which
+made normal battery discharge look jumpy.
 
 The Launcher enters **LOW BATTERY** at approximately 3.40 V (or immediately at
 approximately 3.30 V), dims the PB4 backlight to 20% using 1 kHz PWM, exits any
@@ -50,14 +52,15 @@ higher before restoring normal brightness and coil operation. These are conserva
 guard bands; actual voltage varies with cell condition, temperature, and load.
 
 `CHARGING` is a direct active-low signal from PB1, matching the input and internal
-pull-up configuration in `firmware/MyWhiteRAZ_backup.bin`. It shows while the charge
-controller reports active charging; a USB-connected but fully charged device may not
-show `CHARGING`.
+pull-up configuration in `firmware/MyWhiteRAZ_backup.bin`. The Launcher requires
+three consecutive 100 ms samples before changing the state, so connector noise does
+not flicker the label. It shows while the charge controller reports active charging;
+a USB-connected but fully charged device may instead show `CHARGE IDLE`.
 
-The Launcher's embedded Slideshow also shows a compact battery icon in the
-upper-right corner. It uses the same filtered percentage and low-battery state as
-the menu; green is 60% or higher, yellow is 25-59%, orange is below 25%, and red
-means the low-battery lockout is active.
+The Launcher's embedded Slideshow has a readable status band above the photo. It
+shows `BATT`, percentage, measured voltage, and either `CHARGING` or `CHARGE IDLE`.
+It uses the same filtered state as the menu; green is 60% or higher, yellow is
+25-59%, orange is below 25%, and red means the low-battery lockout is active.
 
 ## Vape remaining level
 

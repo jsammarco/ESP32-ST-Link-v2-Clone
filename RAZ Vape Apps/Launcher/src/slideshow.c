@@ -59,6 +59,8 @@ static fire_source_t g_fire_source;
 static uint8_t g_coil_profile;
 static uint8_t g_battery_percent_drawn;
 static uint8_t g_battery_low_drawn;
+static uint8_t g_battery_charging_drawn;
+static uint16_t g_battery_voltage_drawn;
 
 static uint8_t coil_profile_load(void)
 {
@@ -112,41 +114,39 @@ static void draw_mode_marker(void)
     } else {
         colour = COL_GREEN;
     }
-    display_fill_rect(2u, 2u, 8u, 8u, COL_BLACK);
-    display_fill_rect(3u, 3u, 6u, 6u, colour);
+    /* The battery/charge status owns the upper-left. Keep the selected output
+     * mode indicator in the unused lower-right corner of that status band. */
+    display_fill_rect(116u, 11u, 10u, 9u, COL_BLACK);
+    display_fill_rect(117u, 12u, 8u, 7u, colour);
 }
 
-static void draw_battery_indicator(void)
+static void draw_battery_status(void)
 {
     const uint8_t percent = launcher_battery_percent();
     const uint8_t low = launcher_battery_low();
-    const uint16_t colour = low ? COL_RED :
-        ((percent >= 60u) ? COL_GREEN : ((percent >= 25u) ? COL_YELLOW : COL_ORANGE));
-    const uint16_t fill = (uint16_t)(((uint32_t)percent * 16u + 99u) / 100u);
+    const uint8_t charging = launcher_battery_charging();
+    const uint16_t voltage_bucket = (uint16_t)((launcher_battery_millivolts() + 5u) / 10u);
 
-    /* Compact 16-pixel battery fill at the upper-right, leaving the selected
-     * photo unobscured. The main menu supplies the larger low-battery warning. */
-    display_fill_rect(98u, 2u, 27u, 10u, COL_BLACK);
-    display_fill_rect(100u, 3u, 20u, 1u, COL_WHITE);
-    display_fill_rect(100u, 10u, 20u, 1u, COL_WHITE);
-    display_fill_rect(100u, 3u, 1u, 8u, COL_WHITE);
-    display_fill_rect(119u, 3u, 1u, 8u, COL_WHITE);
-    display_fill_rect(121u, 5u, 2u, 4u, COL_WHITE);
-    if (fill) {
-        display_fill_rect(102u, 5u, fill, 4u, colour);
-    }
+    launcher_draw_battery_status();
     g_battery_percent_drawn = percent;
     g_battery_low_drawn = low;
+    g_battery_charging_drawn = charging;
+    g_battery_voltage_drawn = voltage_bucket;
 }
 
-static void update_battery_indicator(void)
+static uint8_t update_battery_status(void)
 {
     const uint8_t percent = launcher_battery_percent();
     const uint8_t low = launcher_battery_low();
+    const uint8_t charging = launcher_battery_charging();
+    const uint16_t voltage_bucket = (uint16_t)((launcher_battery_millivolts() + 5u) / 10u);
 
-    if (percent != g_battery_percent_drawn || low != g_battery_low_drawn) {
-        draw_battery_indicator();
+    if (percent != g_battery_percent_drawn || low != g_battery_low_drawn ||
+        charging != g_battery_charging_drawn || voltage_bucket != g_battery_voltage_drawn) {
+        draw_battery_status();
+        return 1u;
     }
+    return 0u;
 }
 
 static void render_slide(uint8_t index)
@@ -167,8 +167,8 @@ static void render_slide(uint8_t index)
         }
         display_draw_chunk_cpu(g_decode_buffer, row_start, rows);
     }
+    draw_battery_status();
     draw_mode_marker();
-    draw_battery_indicator();
 }
 
 static void show_next_slide(uint16_t now)
@@ -269,6 +269,8 @@ void slideshow_init(void)
     g_draw_cutoff_latched = 0u;
     g_battery_percent_drawn = 0xFFu;
     g_battery_low_drawn = 0xFFu;
+    g_battery_charging_drawn = 0xFFu;
+    g_battery_voltage_drawn = 0xFFFFu;
     g_mode = MODE_NORMAL;
     g_coil_profile = coil_profile_load();
     coil_stop();
@@ -282,7 +284,9 @@ uint8_t slideshow_update(uint32_t frame)
     const uint16_t now = ms_now();
 
     update_coil(frame, now);
-    update_battery_indicator();
+    if (update_battery_status()) {
+        draw_mode_marker();
+    }
 
     if (button_just_released()) {
         if (!g_press_fired) {
@@ -313,6 +317,8 @@ void slideshow_wake(void)
     g_draw_cutoff_latched = 0u;
     g_battery_percent_drawn = 0xFFu;
     g_battery_low_drawn = 0xFFu;
+    g_battery_charging_drawn = 0xFFu;
+    g_battery_voltage_drawn = 0xFFFFu;
     g_coil_profile = coil_profile_load();
     draw_sensor_init();
     g_slide_started = ms_now();

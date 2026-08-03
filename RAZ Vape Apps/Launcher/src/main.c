@@ -30,6 +30,7 @@ void flappy_module_wake(void);
  * CHRG# indication from the charge circuit, unlike the PA6 battery ADC. */
 #define CHARGER_PIN              1u
 #define CHARGER_SAMPLE_MS       100u
+#define CHARGER_CONFIRM_SAMPLES   3u
 #define BATTERY_SAMPLE_MS      1000u
 #define BATTERY_FILTER_SAMPLES    5u
 
@@ -52,6 +53,13 @@ void flappy_module_wake(void);
 #define BATTERY_UI_NO_CHANGE 0u
 #define BATTERY_UI_WIDGET    1u
 #define BATTERY_UI_MENU      2u
+
+/* PA6 is a divided battery input: Vbat = ADC raw * 3.0 V / 4096 / 0.71.
+ * Keep the integer form here so the UI can show the measured voltage rather
+ * than making the user infer it from an estimated state-of-charge curve. */
+#define BATTERY_ADC_VDDA_MV             3000u
+#define BATTERY_DIVIDER_PERCENT            71u
+#define BATTERY_ADC_COUNTS               4096u
 
 /* PB4 is active-low backlight enable and TIM3_CH1 / AF3 on this MCU. TIM3
  * already ticks every 1 ms for delay_ms(), so it also supplies flicker-free
@@ -105,6 +113,8 @@ static uint16_t g_battery_raw;
 static uint16_t g_battery_last_sample;
 static uint16_t g_charger_last_sample;
 static uint8_t g_battery_charging;
+static uint8_t g_charger_active_samples;
+static uint8_t g_charger_idle_samples;
 static uint8_t g_battery_low;
 static uint8_t g_battery_low_samples;
 static uint8_t g_battery_recover_samples;
@@ -341,6 +351,14 @@ static uint8_t battery_percent(uint16_t raw)
     return 0u;
 }
 
+static uint16_t battery_millivolts(uint16_t raw)
+{
+    const uint32_t numerator = (uint32_t)raw * BATTERY_ADC_VDDA_MV * 100u;
+    const uint32_t denominator = BATTERY_ADC_COUNTS * BATTERY_DIVIDER_PERCENT;
+
+    return (uint16_t)((numerator + denominator / 2u) / denominator);
+}
+
 uint8_t launcher_battery_percent(void)
 {
     return battery_percent(g_battery_raw);
@@ -349,6 +367,16 @@ uint8_t launcher_battery_percent(void)
 uint8_t launcher_battery_low(void)
 {
     return g_battery_low;
+}
+
+uint16_t launcher_battery_millivolts(void)
+{
+    return battery_millivolts(g_battery_raw);
+}
+
+uint8_t launcher_battery_charging(void)
+{
+    return g_battery_charging;
 }
 
 static uint16_t battery_colour(uint8_t percent)
@@ -373,6 +401,35 @@ static void draw_percent_suffix(uint16_t x, uint16_t y, uint8_t percent, uint16_
     }
 }
 
+static void draw_voltage(uint16_t x, uint16_t y, uint16_t millivolts, uint16_t colour)
+{
+    const uint8_t whole_volts = (uint8_t)(millivolts / 1000u);
+    const uint16_t fractional = (uint16_t)(millivolts % 1000u);
+
+    draw_char(x, y, (char)('0' + whole_volts), colour);
+    draw_char((uint16_t)(x + 6u), y, '.', colour);
+    draw_char((uint16_t)(x + 12u), y, (char)('0' + fractional / 100u), colour);
+    draw_char((uint16_t)(x + 18u), y, (char)('0' + (fractional / 10u) % 10u), colour);
+    draw_char((uint16_t)(x + 24u), y, 'V', colour);
+}
+
+/* Called by the embedded Slideshow after it renders each photo. It deliberately
+ * uses a small opaque status band so the level and charge state remain legible
+ * over both light and dark photos. */
+void launcher_draw_battery_status(void)
+{
+    const uint8_t percent = launcher_battery_percent();
+    const uint16_t colour = g_battery_low ? COL_RED : battery_colour(percent);
+
+    display_fill_rect(0u, 0u, LCD_WIDTH, 20u, COL_RGB(4, 5, 20));
+    draw_text(2u, 2u, "BATT", COL_RGB(160, 175, 230));
+    draw_number(32u, 2u, percent, colour);
+    draw_percent_suffix(32u, 2u, percent, colour);
+    draw_voltage(65u, 2u, launcher_battery_millivolts(), colour);
+    draw_text(2u, 11u, launcher_battery_charging() ? "CHARGING" : "CHARGE IDLE",
+              launcher_battery_charging() ? COL_CYAN : COL_RGB(140, 145, 190));
+}
+
 static void draw_battery_widget(void)
 {
     const uint8_t percent = battery_percent(g_battery_raw);
@@ -384,13 +441,16 @@ static void draw_battery_widget(void)
         draw_text(8u, 22u, "LOW BATTERY", COL_RED);
         draw_number(83u, 22u, percent, COL_RED);
         draw_percent_suffix(83u, 22u, percent, COL_RED);
+    } else if (g_battery_charging) {
+        draw_text(8u, 22u, "CHARGING", COL_CYAN);
+        draw_number(62u, 22u, percent, colour);
+        draw_percent_suffix(62u, 22u, percent, colour);
+        draw_voltage(91u, 22u, launcher_battery_millivolts(), colour);
     } else {
         draw_text(8u, 22u, "BATTERY", COL_RGB(160, 175, 230));
         draw_number(53u, 22u, percent, colour);
         draw_percent_suffix(53u, 22u, percent, colour);
-    }
-    if (g_battery_charging && !g_battery_low) {
-        draw_text(79u, 22u, "CHARGING", COL_CYAN);
+        draw_voltage(88u, 22u, launcher_battery_millivolts(), colour);
     }
 
     display_fill_rect(8u, 34u, 112u, 8u, COL_RGB(4, 6, 18));
@@ -423,6 +483,44 @@ static void draw_vape_widget(void)
     }
 }
 
+static uint8_t charger_read_active(void)
+{
+    return (uint8_t)((GPIOB->IDR & (1UL << CHARGER_PIN)) == 0u);
+}
+
+/* PB1 is sampled every 100 ms. Require 300 ms of a consistent state before
+ * changing the label: the charger line is a real status input, but this avoids
+ * momentary connector/noise transitions looking like a charge start or stop. */
+static uint8_t charger_update(void)
+{
+    const uint8_t active = charger_read_active();
+
+    if (active == g_battery_charging) {
+        g_charger_active_samples = 0u;
+        g_charger_idle_samples = 0u;
+        return 0u;
+    }
+
+    if (active) {
+        g_charger_idle_samples = 0u;
+        g_charger_active_samples++;
+        if (g_charger_active_samples >= CHARGER_CONFIRM_SAMPLES) {
+            g_battery_charging = 1u;
+            g_charger_active_samples = 0u;
+            return 1u;
+        }
+    } else {
+        g_charger_active_samples = 0u;
+        g_charger_idle_samples++;
+        if (g_charger_idle_samples >= CHARGER_CONFIRM_SAMPLES) {
+            g_battery_charging = 0u;
+            g_charger_idle_samples = 0u;
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
 static void battery_init(void)
 {
     /* Match the factory configuration for PB1: input, internal pull-up. */
@@ -435,7 +533,9 @@ static void battery_init(void)
     g_battery_last_sample = ms_now();
     g_charger_last_sample = g_battery_last_sample;
     /* PB1 is pulled low by the charge controller while it is charging. */
-    g_battery_charging = (uint8_t)((GPIOB->IDR & (1UL << CHARGER_PIN)) == 0u);
+    g_battery_charging = charger_read_active();
+    g_charger_active_samples = 0u;
+    g_charger_idle_samples = 0u;
     g_battery_low = (uint8_t)(g_battery_raw <= BATTERY_LOW_LOCK_RAW);
     g_battery_low_samples = 0u;
     g_battery_recover_samples = 0u;
@@ -451,11 +551,8 @@ static uint8_t battery_update(uint16_t now)
     uint16_t sample;
 
     if ((uint16_t)(now - g_charger_last_sample) >= CHARGER_SAMPLE_MS) {
-        const uint8_t charging =
-            (uint8_t)((GPIOB->IDR & (1UL << CHARGER_PIN)) == 0u);
         g_charger_last_sample = now;
-        if (charging != g_battery_charging) {
-            g_battery_charging = charging;
+        if (charger_update()) {
             widget_changed = 1u;
         }
     }
