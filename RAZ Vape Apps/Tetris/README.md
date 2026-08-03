@@ -7,7 +7,7 @@ Standalone build of the one-button Tetris game used by Launcher.
 | One short press | Move right after the double-tap window |
 | Two short presses | Move left |
 | Hold 450 ms | Rotate clockwise |
-| Draw from pressure sensor | Hard-drop and lock the active piece |
+| Draw from pressure (puff) sensor | Taking a puff hard-drops and locks the active piece |
 
 Clearing a row opens a 1.5-second `VAPE NOW` reward window. The coil requires
 an active pressure-sensor draw during that window and switches off immediately

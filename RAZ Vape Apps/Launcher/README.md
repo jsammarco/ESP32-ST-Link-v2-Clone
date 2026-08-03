@@ -13,7 +13,7 @@ builds a fresh image from its two Launcher bundle selectors before flashing.
 | Tetris | One short press | Move right after the double-tap window |
 | Tetris | Two short presses | Move left |
 | Tetris | Hold 450 ms | Rotate clockwise |
-| Tetris | Draw from pressure sensor | Hard-drop and lock the active piece |
+| Tetris | Draw from pressure (puff) sensor | Taking a puff hard-drops and locks the active piece |
 | Tetris | Hold 2 s, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Double-tap | Switch Normal / Boost output mode |

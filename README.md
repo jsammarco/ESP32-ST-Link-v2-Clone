@@ -272,7 +272,7 @@ Launcher contains the one or two apps selected in the Manager:
 | Menu | Tap | Change selection |
 | Menu | Hold about 650 ms, then release | Start the selected app |
 | Tetris | One tap / two taps / 450 ms hold | Right / left / rotate |
-| Tetris | Pressure-sensor draw | Hard-drop; coil is permitted only for 1.5 seconds from a row clear |
+| Tetris | Pressure (puff) sensor draw | Taking a puff hard-drops and locks the piece; the coil is permitted only for 1.5 seconds from a row clear |
 | Tetris | Hold about 2 seconds, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Triple-tap | Return to menu |
