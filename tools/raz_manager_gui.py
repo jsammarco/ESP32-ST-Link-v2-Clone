@@ -51,6 +51,9 @@ NV_LINE = re.compile(r"^NV\s+(\d+)\s+(NONE|[0-9A-Fa-f]{8})$")
 APPS = {
     "Launcher": REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher.bin",
     "Tetris": REPO_ROOT / "RAZ Vape Apps" / "Tetris" / "build" / "tetris.bin",
+    "Pac-Man": REPO_ROOT / "RAZ Vape Apps" / "Pacman" / "build" / "pacman.bin",
+    "Mario 1-1": REPO_ROOT / "RAZ Vape Apps" / "Mario" / "build" / "mario.bin",
+    "Geometry Dash": REPO_ROOT / "RAZ Vape Apps" / "GeometryDash" / "build" / "geometry-dash.bin",
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy.bin",
 }
@@ -60,10 +63,13 @@ LAUNCHER_STREAM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "la
 SLIDESHOW_PHOTOS_STREAM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos-stream.bin"
 STREAM_IMAGES = {
     "Tetris": REPO_ROOT / "RAZ Vape Apps" / "Tetris" / "build" / "tetris-stream.bin",
+    "Pac-Man": REPO_ROOT / "RAZ Vape Apps" / "Pacman" / "build" / "pacman-stream.bin",
+    "Mario 1-1": REPO_ROOT / "RAZ Vape Apps" / "Mario" / "build" / "mario-stream.bin",
+    "Geometry Dash": REPO_ROOT / "RAZ Vape Apps" / "GeometryDash" / "build" / "geometry-dash-stream.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy-stream.bin",
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-stream.bin",
 }
-LAUNCHER_BUNDLE_APPS = ("Tetris", "Flappy", "Slideshow")
+LAUNCHER_BUNDLE_APPS = ("Tetris", "Pac-Man", "Flappy", "Slideshow")
 NO_SECOND_APP = "None"
 
 NV_LABELS = {

@@ -88,6 +88,11 @@ if "%LAUNCHER_BUILD_TETRIS%"=="1" (
   %GCC% %CFLAGS% -c src\tetris.c -o build\tetris.o || goto :error
   set MODULE_OBJECTS=!MODULE_OBJECTS! build\tetris.o
 )
+if "%LAUNCHER_BUILD_PACMAN%"=="1" (
+  echo [module] pacman.c
+  %GCC% %CFLAGS% -c src\pacman.c -o build\pacman.o || goto :error
+  set MODULE_OBJECTS=!MODULE_OBJECTS! build\pacman.o
+)
 if "%LAUNCHER_BUILD_FLAPPY%"=="1" (
   echo [module] flappy_embedded.c
   %GCC% %CFLAGS% -c src\flappy_embedded.c -o build\flappy_embedded.o || goto :error

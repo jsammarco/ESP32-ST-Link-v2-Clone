@@ -20,6 +20,9 @@
 #if LAUNCHER_HAS_TETRIS
 #include "tetris.h"
 #endif
+#if LAUNCHER_HAS_PACMAN
+#include "pacman.h"
+#endif
 #include "vape_level.h"
 
 #if LAUNCHER_HAS_FLAPPY
@@ -702,6 +705,11 @@ static void module_init(uint8_t kind)
         tetris_init();
         break;
 #endif
+#if LAUNCHER_HAS_PACMAN
+    case LAUNCHER_MODULE_PACMAN:
+        pacman_init();
+        break;
+#endif
 #if LAUNCHER_HAS_FLAPPY
     case LAUNCHER_MODULE_FLAPPY:
         flappy_module_init();
@@ -726,6 +734,11 @@ static uint8_t module_update(uint8_t kind, uint32_t frame)
         tetris_update(frame);
         break;
 #endif
+#if LAUNCHER_HAS_PACMAN
+    case LAUNCHER_MODULE_PACMAN:
+        pacman_update(frame);
+        break;
+#endif
 #if LAUNCHER_HAS_FLAPPY
     case LAUNCHER_MODULE_FLAPPY:
         flappy_module_update(frame);
@@ -747,6 +760,11 @@ static void module_wake(uint8_t kind)
 #if LAUNCHER_HAS_TETRIS
     case LAUNCHER_MODULE_TETRIS:
         tetris_wake();
+        break;
+#endif
+#if LAUNCHER_HAS_PACMAN
+    case LAUNCHER_MODULE_PACMAN:
+        pacman_wake();
         break;
 #endif
 #if LAUNCHER_HAS_FLAPPY

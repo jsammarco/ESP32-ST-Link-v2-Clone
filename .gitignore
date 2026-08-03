@@ -5,3 +5,9 @@ __pycache__/
 *.py[cod]
 /build/
 /dist/
+RAZ Vape Apps/Mario/build/*
+!RAZ Vape Apps/Mario/build/mario.bin
+!RAZ Vape Apps/Mario/build/mario-stream.bin
+RAZ Vape Apps/GeometryDash/build/*
+!RAZ Vape Apps/GeometryDash/build/geometry-dash.bin
+!RAZ Vape Apps/GeometryDash/build/geometry-dash-stream.bin

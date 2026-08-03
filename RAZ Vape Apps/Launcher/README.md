@@ -1,7 +1,7 @@
 # Launcher
 
 One firmware image containing a launcher menu and one or two build-selected apps.
-Tetris, Flappy Bird, and Slideshow can occupy either slot. The RAZ ESP32 Manager
+Tetris, Pac-Man, Flappy Bird, and Slideshow can occupy either slot. The RAZ ESP32 Manager
 builds a fresh image from its two Launcher bundle selectors before flashing.
 
 ## Controls
@@ -15,6 +15,10 @@ builds a fresh image from its two Launcher bundle selectors before flashing.
 | Tetris | Hold 450 ms | Rotate clockwise |
 | Tetris | Draw from pressure (puff) sensor | Taking a puff hard-drops and locks the active piece |
 | Tetris | Hold 2 s, then release | Return to menu |
+| Pac-Man | One short press | Queue a right turn immediately on release |
+| Pac-Man | Two short presses | Queue a left turn |
+| Pac-Man | Hold 450 ms | Reverse direction |
+| Pac-Man | Hold 2 s, then release | Return to menu |
 | Slideshow | Tap | Next photo |
 | Slideshow | Double-tap | Switch Normal / Boost output mode |
 | Slideshow | Triple-tap | Return to menu |
@@ -23,12 +27,16 @@ builds a fresh image from its two Launcher bundle selectors before flashing.
 | Flappy | Standard button presses | Flap / game controls |
 | Flappy | Hold 2 s, then release | Return to menu |
 
-Every launcher transition turns the coil output off first. Tetris never requests
-coil output during ordinary play. Clearing a row opens a 1.5-second `VAPE NOW`
-window measured from the clear; only an active pressure-sensor draw inside that
-window can enable it, and release or timeout stops it immediately. The embedded Flappy code
-keeps its current score-triggered coil behaviour, so its own safeguards and controls
-remain unchanged.
+Every launcher transition turns the coil output off first. Pac-Man never requests
+coil output. Tetris never requests coil output during ordinary play. Clearing a
+row opens a 1.5-second `VAPE NOW` window measured from the clear; only an active
+pressure-sensor draw inside that window can enable it, and release or timeout
+stops it immediately. The embedded Flappy code keeps its current score-triggered
+coil behaviour, so its own safeguards and controls remain unchanged.
+
+Pac-Man uses the canonical 28x31 arcade maze and moves one tile every 480 ms.
+Requested turns stay buffered until legal; unambiguous corners and dead-end
+reversals are automatic to make the relative controls practical with one button.
 
 ## Slideshow coil control
 

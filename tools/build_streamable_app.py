@@ -14,6 +14,9 @@ from build_slideshow_with_photos import find_vaporware_sdk
 REPO_ROOT = Path(os.environ.get("RAZ_REPO_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 APP_CONFIG = {
     "Tetris": ("Tetris", "build_tetris.bat", "TETRIS_APP_NAME", "tetris-stream"),
+    "Pac-Man": ("Pacman", "build_pacman.bat", "PACMAN_APP_NAME", "pacman-stream"),
+    "Mario 1-1": ("Mario", "build_mario.bat", "MARIO_APP_NAME", "mario-stream"),
+    "Geometry Dash": ("GeometryDash", "build_geometry_dash.bat", "GEOMETRY_DASH_APP_NAME", "geometry-dash-stream"),
     "Flappy": ("flappy", "build_flappy.bat", "FLAPPY_APP_NAME", "flappy-stream"),
     "Slideshow": ("Slideshow", "build_slideshow.bat", "SLIDESHOW_APP_NAME", "slideshow-stream"),
 }

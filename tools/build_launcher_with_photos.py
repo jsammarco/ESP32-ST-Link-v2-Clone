@@ -24,7 +24,7 @@ LAUNCHER_DIR = REPO_ROOT / "RAZ Vape Apps" / "Launcher"
 BUILD_SCRIPT = LAUNCHER_DIR / "build_launcher.bat"
 CUSTOM_APP_NAME = "launcher-custom"
 GENERATED_HEADER = LAUNCHER_DIR / "generated" / "photos.h"
-BUNDLE_APPS = ("Tetris", "Flappy", "Slideshow")
+BUNDLE_APPS = ("Tetris", "Pac-Man", "Flappy", "Slideshow")
 
 
 def parse_args() -> argparse.Namespace:

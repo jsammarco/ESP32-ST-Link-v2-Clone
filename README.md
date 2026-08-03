@@ -30,6 +30,9 @@ physical ST-Link is required.
 |---|---|---|
 | Launcher | [`launcher.bin`](<RAZ Vape Apps/Launcher/build/launcher.bin>) | Configurable menu containing one or two selected apps. |
 | Tetris | [`tetris.bin`](<RAZ Vape Apps/Tetris/build/tetris.bin>) | Standalone one-button Tetris game. |
+| Pac-Man | [`pacman.bin`](<RAZ Vape Apps/Pacman/build/pacman.bin>) | Standalone one-button maze-chase game. |
+| Mario 1-1 | [`mario.bin`](<RAZ Vape Apps/Mario/build/mario.bin>) | Full-length one-button side-scrolling first level. |
+| Geometry Dash | [`geometry-dash.bin`](<RAZ Vape Apps/GeometryDash/build/geometry-dash.bin>) | Complete one-button neon obstacle course. |
 | Slideshow | [`slideshow.bin`](<RAZ Vape Apps/Slideshow/build/slideshow.bin>) | Photo slideshow. Its source includes limited coil-output modes; review it carefully before use. |
 | Flappy | [`flappy.bin`](<RAZ Vape Apps/flappy/build/flappy.bin>) | Flappy-style application for the vape display. |
 
@@ -87,12 +90,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\start_raz_manage
 Select the ESP32's COM port in the window. The GUI excludes `COM1` from its
 port list because that is normally the legacy motherboard serial port. It can
 test the SWD connection, create a named (or timestamped) backup, restore a
-selected backup, flash Launcher/Tetris/Slideshow/Flappy or a custom `.bin`, and display the persisted
+selected backup, flash Launcher/Tetris/Pac-Man/Mario 1-1/Geometry Dash/Slideshow/Flappy or a custom `.bin`, and display the persisted
 internal-flash values. It runs the same `fast_flash.py` protocol as the
 command-line workflow and its log shows the exact ESP32 progress messages.
 
 When **Launcher** is selected, choose one or two bundled apps from the two
-**Launcher bundle** boxes. The available modules are Tetris, Flappy, and
+**Launcher bundle** boxes. The available modules are Tetris, Pac-Man, Flappy, and
 Slideshow; choose **None** in the second box for a one-app launcher. The Manager
 builds `launcher-custom.bin` from that selection before it backs up and flashes.
 
@@ -120,10 +123,10 @@ that operation.
 ### Live screen streaming
 
 Check **Add full-resolution SWD screen streamer (128×160)** before flashing
-Launcher, Tetris, Flappy, or Slideshow. The Manager builds a separate
+Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Flappy, or Slideshow. The Manager builds a separate
 `*-stream.bin` image and leaves each normal prebuilt image unchanged. For
 Launcher, the stream covers its menu and every selected module, including
-Flappy, Tetris, and Slideshow.
+Flappy, Tetris, Pac-Man, and Slideshow.
 
 After upgrading from the older 64x80 streamer, run **Update ESP32 firmware...**
 once and reflash the selected RAZ app with the full-resolution streamer checked;
@@ -246,7 +249,7 @@ For Launcher:
 python tools\fast_flash.py --port COM7 --flash ".\RAZ Vape Apps\Launcher\build\launcher.bin"
 ```
 
-For Tetris, Slideshow, or Flappy, replace the image path with the corresponding `.bin`
+For Tetris, Pac-Man, Mario 1-1, Geometry Dash, Slideshow, or Flappy, replace the image path with the corresponding `.bin`
 listed above. The flasher displays `ERASE`, `PROGRAM`, and `VERIFY` progress.
 Only `DONE` means the image verified and the ESP32 requested a target reset.
 
@@ -309,9 +312,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\restore_raz.ps1 
 In the desktop manager, choose **Restore backup / .bin...**, select **Yes** for
 a standalone file, then choose the 64 KB `.bin` image.
 
-## Launcher controls
+## Game controls
 
-Launcher contains the one or two apps selected in the Manager:
+Launcher contains the one or two modules selected in the Manager. Mario 1-1 and
+Geometry Dash are flashed as standalone apps from the same Manager app list:
 
 | Screen | Gesture | Action |
 |---|---|---|
@@ -320,6 +324,15 @@ Launcher contains the one or two apps selected in the Manager:
 | Tetris | One tap / two taps / 450 ms hold | Right / left / rotate |
 | Tetris | Pressure (puff) sensor draw | Taking a puff hard-drops and locks the piece; the coil is permitted only for 1.5 seconds from a row clear |
 | Tetris | Hold about 2 seconds, then release | Return to menu |
+| Pac-Man | One tap / two taps / 450 ms hold | Queue right / queue left / reverse |
+| Pac-Man | Automatic assist | Follow unambiguous corners and reverse at dead ends |
+| Pac-Man | Hold about 2 seconds, then release | Return to menu |
+| Mario 1-1 | One short press | Toggle running forward on or off |
+| Mario 1-1 | Two short presses within 260 ms | Step backward two tiles, then resume the prior state |
+| Mario 1-1 | Hold 420 ms | Jump once |
+| Geometry Dash | Press | Start or jump; a midair press activates a nearby yellow orb |
+| Geometry Dash | Hold | Chain another jump whenever the cube lands |
+| Geometry Dash | Press after crashing | Start the next attempt |
 | Slideshow | Tap | Next photo |
 | Slideshow | Triple-tap | Return to menu |
 | Flappy | Hold about 2 seconds, then release | Return to menu |
@@ -344,7 +357,7 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 |---|---|
 | `Access is denied` for `COM7` | Close PlatformIO Monitor, the serial bridge, and any other serial program. |
 | `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
-| `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
+| `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
 | `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain the 100 ohm resistors, charge the device, and rerun the read-only probe before retrying. |
 | Screen does not return immediately after `DONE` | Verify the latest ESP32 firmware was uploaded, then power-cycle/reset the target before attempting another flash. |
 
