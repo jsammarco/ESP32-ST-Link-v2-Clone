@@ -19,6 +19,14 @@ if not defined LAUNCHER_APP_2 set LAUNCHER_APP_2=Flappy
 set CPU=-mcpu=cortex-m0 -mthumb
 set INC=-I%VAPORWARE%\include -Igenerated -Isrc
 set CFLAGS=%CPU% %INC% -Os -ffunction-sections -fdata-sections -Wall -Wextra -std=c11
+set STREAM_OBJECTS=
+set STREAM_LINK_FLAGS=
+if "%SCREEN_STREAMER%"=="1" (
+  echo [stream] Enabling the native 128x160 SWD screen stream...
+  set CFLAGS=!CFLAGS! -DSCREEN_STREAMER=1
+  set STREAM_OBJECTS=build\screen_stream.o
+  set STREAM_LINK_FLAGS=-Wl,--wrap=display_fill -Wl,--wrap=display_fill_rect -Wl,--wrap=display_draw_image -Wl,--wrap=display_draw_sprite -Wl,--wrap=display_draw_chunk_cpu -Wl,--wrap=display_draw_chunk_dma -Wl,--wrap=display_draw_chunk_2x -Wl,--wrap=display_draw_pixel
+)
 
 if not exist generated mkdir generated
 if not exist build mkdir build
@@ -67,6 +75,11 @@ echo [7/12] nv.c       (vaporware)
 echo [8/12] app.c      (vaporware)
 %GCC% %CFLAGS% -c %VAPORWARE%\src\app.c     -o build\app.o     || goto :error
 
+if "%SCREEN_STREAMER%"=="1" (
+  echo [stream] screen_stream.c
+  %GCC% %CFLAGS% -c "..\ScreenStreamer\screen_stream.c" -o build\screen_stream.o || goto :error
+)
+
 echo [sensor] draw_sensor.c
 %GCC% %CFLAGS% -c src\draw_sensor.c -o build\draw_sensor.o || goto :error
 set MODULE_OBJECTS=build\draw_sensor.o
@@ -93,10 +106,10 @@ echo [10/12] main.c    (Launcher)
 %GCC% %CFLAGS% -c src\main.c -o build\main.o || goto :error
 
 echo [link] Linking...
-%GCC% %CPU% -T%VAPORWARE%\n32g031.ld -Wl,--gc-sections -Wl,-Map=build\%APP_NAME%.map -nostdlib -lnosys ^
+%GCC% %CPU% -T%VAPORWARE%\n32g031.ld -Wl,--gc-sections !STREAM_LINK_FLAGS! -Wl,-Map=build\%APP_NAME%.map -nostdlib -lnosys ^
   build\startup.o build\system.o build\display.o build\vape.o ^
   build\button.o build\battery.o build\nv.o build\app.o ^
-  !MODULE_OBJECTS! build\vape_level.o build\main.o -o build\%APP_NAME%.elf || goto :error
+  !MODULE_OBJECTS! !STREAM_OBJECTS! build\vape_level.o build\main.o -o build\%APP_NAME%.elf || goto :error
 
 %OBJCOPY% -O binary build\%APP_NAME%.elf build\%APP_NAME%.bin || goto :error
 %OBJCOPY% -O ihex   build\%APP_NAME%.elf build\%APP_NAME%.hex || goto :error

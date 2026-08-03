@@ -1,4 +1,5 @@
 @echo off
+setlocal
 cd /d "%~dp0"
 :: build_flappy.bat - FlappyVape for N32G031 + GC9107 128x160 LCD
 :: Uses the full Vaporware SDK framework (app.c, button.c, nv.c, etc.)
@@ -7,11 +8,24 @@ set GCC="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\ar
 set OBJCOPY="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-objcopy.exe"
 set SIZE="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\arm-none-eabi-size.exe"
 
-set VAPORWARE=%~dp0..\..\src
+if defined FLAPPY_APP_NAME (
+  set APP_NAME=%FLAPPY_APP_NAME%
+) else (
+  set APP_NAME=flappy
+)
+if not defined VAPORWARE for %%I in ("%~dp0..\..\..\Vaporware\src") do set "VAPORWARE=%%~fI"
 
 set CPU=-mcpu=cortex-m0 -mthumb
 set INC=-I%VAPORWARE%\include
 set CFLAGS=%CPU% %INC% -Os -ffunction-sections -fdata-sections -Wall -std=c11
+set STREAM_OBJECTS=
+set STREAM_LINK_FLAGS=
+if "%SCREEN_STREAMER%"=="1" (
+  echo [stream] Enabling the native 128x160 SWD screen stream...
+  set CFLAGS=%CFLAGS% -DSCREEN_STREAMER=1
+  set STREAM_OBJECTS=build\screen_stream.o
+  set STREAM_LINK_FLAGS=-Wl,--wrap=display_fill -Wl,--wrap=display_fill_rect -Wl,--wrap=display_draw_image -Wl,--wrap=display_draw_sprite -Wl,--wrap=display_draw_chunk_cpu -Wl,--wrap=display_draw_chunk_dma -Wl,--wrap=display_draw_chunk_2x -Wl,--wrap=display_draw_pixel
+)
 
 if not exist build mkdir build
 
@@ -38,27 +52,30 @@ echo [7/9] nv.c       (vaporware)
 
 echo [8/9] app.c      (vaporware)
 %GCC% %CFLAGS% -c %VAPORWARE%\src\app.c     -o build\app.o     || goto :error
+if "%SCREEN_STREAMER%"=="1" %GCC% %CFLAGS% -c "..\ScreenStreamer\screen_stream.c" -o build\screen_stream.o || goto :error
 
 echo [9/9] flappy.c   (app)
 %GCC% %CFLAGS% -c src\flappy.c -o build\flappy.o || goto :error
 
 echo Linking...
-%GCC% %CPU% -T%VAPORWARE%\n32g031.ld -Wl,--gc-sections -Wl,-Map=build\flappy.map -nostdlib -lnosys ^
+%GCC% %CPU% -T%VAPORWARE%\n32g031.ld -Wl,--gc-sections %STREAM_LINK_FLAGS% -Wl,-Map=build\%APP_NAME%.map -nostdlib -lnosys ^
   build\startup.o build\system.o build\display.o build\vape.o ^
-  build\button.o build\battery.o build\nv.o build\app.o ^
+  build\button.o build\battery.o build\nv.o build\app.o %STREAM_OBJECTS% ^
   build\flappy.o ^
-  -o build\flappy.elf || goto :error
+  -o build\%APP_NAME%.elf || goto :error
 
-%OBJCOPY% -O binary build\flappy.elf build\flappy.bin || goto :error
-%OBJCOPY% -O ihex   build\flappy.elf build\flappy.hex || goto :error
-%SIZE% build\flappy.elf
+%OBJCOPY% -O binary build\%APP_NAME%.elf build\%APP_NAME%.bin || goto :error
+%OBJCOPY% -O ihex   build\%APP_NAME%.elf build\%APP_NAME%.hex || goto :error
+%SIZE% build\%APP_NAME%.elf
 
 echo.
-echo Build SUCCESS: build\flappy.bin
+echo Build SUCCESS: build\%APP_NAME%.bin
 echo.
 echo Next: python gen_direct_flash.py   then   flash_vape.bat
-goto :eof
+endlocal
+exit /b 0
 
 :error
 echo BUILD FAILED
+endlocal
 exit /b 1

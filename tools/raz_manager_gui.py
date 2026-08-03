@@ -8,6 +8,7 @@ thread and showing the exact ESP32 progress messages in the window.
 
 from __future__ import annotations
 
+import os
 import queue
 import re
 import shutil
@@ -25,10 +26,24 @@ except ModuleNotFoundError:
     list_ports = None
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+def find_repo_root() -> Path:
+    candidates = [Path(__file__).resolve().parent.parent]
+    if getattr(sys, "frozen", False):
+        executable_directory = Path(sys.executable).resolve().parent
+        candidates.extend([executable_directory, executable_directory.parent, Path.cwd()])
+    for candidate in candidates:
+        if (candidate / "platformio.ini").is_file() and (candidate / "RAZ Vape Apps").is_dir():
+            return candidate
+    return candidates[0]
+
+
+REPO_ROOT = find_repo_root()
+os.environ.setdefault("RAZ_REPO_ROOT", str(REPO_ROOT))
 FLASH_TOOL = Path(__file__).resolve().with_name("fast_flash.py")
 SLIDESHOW_BUILD_TOOL = Path(__file__).resolve().with_name("build_slideshow_with_photos.py")
 LAUNCHER_BUILD_TOOL = Path(__file__).resolve().with_name("build_launcher_with_photos.py")
+STREAM_BUILD_TOOL = Path(__file__).resolve().with_name("build_streamable_app.py")
+SCREEN_STREAMER_TOOL = Path(__file__).resolve().with_name("raz_screen_streamer.py")
 BACKUP_ROOT = REPO_ROOT / "backups"
 FULL_FLASH_BYTES = 64 * 1024
 NV_LINE = re.compile(r"^NV\s+(\d+)\s+(NONE|[0-9A-Fa-f]{8})$")
@@ -41,6 +56,13 @@ APPS = {
 }
 SLIDESHOW_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos.bin"
 LAUNCHER_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-custom.bin"
+LAUNCHER_STREAM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-custom-stream.bin"
+SLIDESHOW_PHOTOS_STREAM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos-stream.bin"
+STREAM_IMAGES = {
+    "Tetris": REPO_ROOT / "RAZ Vape Apps" / "Tetris" / "build" / "tetris-stream.bin",
+    "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy-stream.bin",
+    "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-stream.bin",
+}
 LAUNCHER_BUNDLE_APPS = ("Tetris", "Flappy", "Slideshow")
 NO_SECOND_APP = "None"
 
@@ -72,6 +94,16 @@ COIL_PROFILE_OPTIONS = {
 }
 
 
+def local_tool_command(tool: Path, arguments: list[str]) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--internal-tool", tool.stem, *arguments]
+    return [sys.executable, "-u", str(tool), *arguments]
+
+
+def local_tool_available(tool: Path) -> bool:
+    return getattr(sys, "frozen", False) or tool.is_file()
+
+
 class RazManager(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -82,6 +114,7 @@ class RazManager(tk.Tk):
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.process: subprocess.Popen[str] | None = None
+        self.stream_process: subprocess.Popen[object] | None = None
         self.current_action = ""
         self.cancel_requested = False
         self.values: dict[int, int | None] = {}
@@ -93,6 +126,7 @@ class RazManager(tk.Tk):
         self.app_var = tk.StringVar(value="Launcher")
         self.backup_name_var = tk.StringVar()
         self.backup_before_flash_var = tk.BooleanVar(value=True)
+        self.screen_stream_var = tk.BooleanVar(value=False)
         self.launcher_level_var = tk.StringVar(value="Preserve saved value")
         self.coil_profile_var = tk.StringVar(value="Current app default")
         self.launcher_app_1_var = tk.StringVar(value="Tetris")
@@ -245,7 +279,21 @@ class RazManager(tk.Tk):
         backup_before_flash.grid(row=8, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
         self.action_widgets.append(backup_before_flash)
 
-        ttk.Label(write_frame, text="Launcher level:").grid(row=9, column=0, sticky="w", pady=(10, 0))
+        self.screen_stream_check = ttk.Checkbutton(
+            write_frame,
+            text="Add full-resolution SWD screen streamer (128×160)",
+            variable=self.screen_stream_var,
+        )
+        self.screen_stream_check.grid(row=9, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.open_stream_button = ttk.Button(
+            write_frame,
+            text="Open screen viewer",
+            command=self.open_screen_viewer,
+        )
+        self.open_stream_button.grid(row=9, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.action_widgets.extend([self.screen_stream_check, self.open_stream_button])
+
+        ttk.Label(write_frame, text="Launcher level:").grid(row=10, column=0, sticky="w", pady=(10, 0))
         self.launcher_level_box = ttk.Combobox(
             write_frame,
             textvariable=self.launcher_level_var,
@@ -253,9 +301,9 @@ class RazManager(tk.Tk):
             state="readonly",
             width=25,
         )
-        self.launcher_level_box.grid(row=9, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.launcher_level_box.grid(row=10, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
 
-        ttk.Label(write_frame, text="Coil profile:").grid(row=10, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(write_frame, text="Coil profile:").grid(row=11, column=0, sticky="w", pady=(6, 0))
         self.coil_profile_box = ttk.Combobox(
             write_frame,
             textvariable=self.coil_profile_var,
@@ -263,7 +311,7 @@ class RazManager(tk.Tk):
             state="readonly",
             width=29,
         )
-        self.coil_profile_box.grid(row=10, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.coil_profile_box.grid(row=11, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.launcher_level_box, self.coil_profile_box])
         ttk.Label(
             write_frame,
@@ -271,13 +319,13 @@ class RazManager(tk.Tk):
                   "the battery or consumable. No profile increases the current app's output or cutoff."),
             foreground="#444444",
             wraplength=650,
-        ).grid(row=11, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
+        ).grid(row=12, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
         ttk.Label(
             write_frame,
             text="Always create a backup before flashing or restoring. Restore overwrites all internal flash and saved settings.",
             foreground="#7a3000",
             wraplength=650,
-        ).grid(row=12, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ).grid(row=13, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         values_frame = ttk.LabelFrame(main, text="Saved values", padding=10)
         values_frame.grid(row=5, column=0, columnspan=4, sticky="new", pady=(12, 0))
@@ -321,6 +369,7 @@ class RazManager(tk.Tk):
     def on_app_selected(self, _event: tk.Event[tk.Misc] | None = None) -> None:
         selection = self.app_var.get()
         if selection == CUSTOM_APP:
+            self.screen_stream_var.set(False)
             self.choose_custom_image()
         elif selection == "Launcher":
             self.update_launcher_bundle_summary()
@@ -352,6 +401,8 @@ class RazManager(tk.Tk):
         self.launcher_app_2_box.configure(state=state)
         self.launcher_level_box.configure(state=state)
         self.coil_profile_box.configure(state=state)
+        stream_state = "normal" if self.app_var.get() != CUSTOM_APP and self.process is None else "disabled"
+        self.screen_stream_check.configure(state=stream_state)
 
     def update_slideshow_photo_options(self) -> None:
         slideshow_available = self.app_var.get() == "Slideshow" or (
@@ -360,6 +411,39 @@ class RazManager(tk.Tk):
         state = "normal" if slideshow_available and self.process is None else "disabled"
         self.choose_slideshow_photos_button.configure(state=state)
         self.clear_slideshow_photos_button.configure(state=state)
+
+    def open_screen_viewer(self) -> None:
+        port = self.selected_port()
+        if port is None or self.process is not None:
+            return
+        if self.stream_process is not None and self.stream_process.poll() is None:
+            return
+
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--screen-streamer", "--port", port]
+        else:
+            if not SCREEN_STREAMER_TOOL.is_file():
+                messagebox.showerror("Missing screen viewer", f"Cannot find:\n{SCREEN_STREAMER_TOOL}")
+                return
+            command = [sys.executable, str(SCREEN_STREAMER_TOOL), "--port", port]
+        try:
+            self.stream_process = subprocess.Popen(command, cwd=REPO_ROOT)
+        except OSError as exc:
+            messagebox.showerror("Could not open screen viewer", str(exc))
+            return
+        self.set_actions_enabled(False)
+        self.status_var.set("Screen viewer owns the ESP32 port. Close it before using manager operations.")
+        self.after(250, self._poll_screen_viewer)
+
+    def _poll_screen_viewer(self) -> None:
+        process = self.stream_process
+        if process is not None and process.poll() is None:
+            self.after(250, self._poll_screen_viewer)
+            return
+        self.stream_process = None
+        if self.process is None:
+            self.set_actions_enabled(True)
+            self.status_var.set("Screen viewer closed; manager operations are available again.")
 
     def choose_slideshow_photos(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -443,11 +527,11 @@ class RazManager(tk.Tk):
         port = self.selected_port()
         if port is None or self.process is not None:
             return
-        if not FLASH_TOOL.is_file():
+        if not local_tool_available(FLASH_TOOL):
             messagebox.showerror("Missing tool", f"Cannot find:\n{FLASH_TOOL}")
             return
 
-        command = [sys.executable, "-u", str(FLASH_TOOL), "--port", port, *arguments]
+        command = local_tool_command(FLASH_TOOL, ["--port", port, *arguments])
         self.run_command(action, command)
 
     def run_command(self, action: str, command: list[str]) -> None:
@@ -730,6 +814,7 @@ class RazManager(tk.Tk):
             selection == "Launcher" and "Slideshow" in launcher_apps
         )
         building_selected_photos = slideshow_selected and bool(self.slideshow_photos)
+        stream_enabled = self.screen_stream_var.get() and selection != CUSTOM_APP
         if selection == CUSTOM_APP:
             if self.custom_image_path is None or not self.custom_image_path.is_file():
                 if self.choose_custom_image() is None:
@@ -738,12 +823,14 @@ class RazManager(tk.Tk):
             if image_path is None:
                 return
         elif selection == "Launcher":
-            image_path = LAUNCHER_CUSTOM_IMAGE
+            image_path = LAUNCHER_STREAM_IMAGE if stream_enabled else LAUNCHER_CUSTOM_IMAGE
         elif building_selected_photos:
-            image_path = SLIDESHOW_CUSTOM_IMAGE
+            image_path = SLIDESHOW_PHOTOS_STREAM_IMAGE if stream_enabled else SLIDESHOW_CUSTOM_IMAGE
+        elif stream_enabled:
+            image_path = STREAM_IMAGES[selection]
         else:
             image_path = APPS[selection]
-        building_fresh_image = selection == "Launcher" or building_selected_photos
+        building_fresh_image = selection == "Launcher" or building_selected_photos or stream_enabled
         if not image_path.is_file() and not building_fresh_image:
             messagebox.showerror("Image not found", f"Cannot find:\n{image_path}\n\nBuild or copy the app image first.")
             return
@@ -754,15 +841,19 @@ class RazManager(tk.Tk):
         build_note = ""
         if selection == "Launcher":
             build_tool = LAUNCHER_BUILD_TOOL
-            if not build_tool.is_file():
+            if not local_tool_available(build_tool):
                 messagebox.showerror("Missing Launcher builder", f"Cannot find:\n{build_tool}")
                 return
-            command = [sys.executable, "-u", str(build_tool), "--apps", *launcher_apps]
+            command = local_tool_command(build_tool, ["--apps", *launcher_apps])
             if building_selected_photos:
                 command.extend(["--photos", *(str(photo) for photo in self.slideshow_photos)])
+            if stream_enabled:
+                command.append("--screen-stream")
             build_note = f"\nA fresh Launcher containing {' + '.join(launcher_apps)} will be built before flashing.\n"
             if building_selected_photos:
                 build_note += f"It will include {len(self.slideshow_photos)} selected Slideshow photo(s).\n"
+            if stream_enabled:
+                build_note += "It will include the native 128×160 SWD screen stream.\n"
             pre_flash_steps.append(
                 (
                     "Build Launcher: " + " + ".join(launcher_apps),
@@ -772,7 +863,7 @@ class RazManager(tk.Tk):
             )
         elif building_selected_photos:
             build_tool = SLIDESHOW_BUILD_TOOL
-            if not build_tool.is_file():
+            if not local_tool_available(build_tool):
                 messagebox.showerror("Missing photo builder", f"Cannot find:\n{build_tool}")
                 return
             build_note = (
@@ -781,13 +872,29 @@ class RazManager(tk.Tk):
             pre_flash_steps.append(
                 (
                     "Build Slideshow with selected photos",
-                    [
-                        sys.executable,
-                        "-u",
-                        str(build_tool),
-                        "--photos",
-                        *(str(photo) for photo in self.slideshow_photos),
-                    ],
+                    local_tool_command(
+                        build_tool,
+                        [
+                            "--photos",
+                            *(str(photo) for photo in self.slideshow_photos),
+                            *(["--screen-stream"] if stream_enabled else []),
+                        ],
+                    ),
+                    False,
+                )
+            )
+        elif stream_enabled:
+            if not local_tool_available(STREAM_BUILD_TOOL):
+                messagebox.showerror("Missing stream-enabled app builder", f"Cannot find:\n{STREAM_BUILD_TOOL}")
+                return
+            build_note = (
+                f"\nA fresh stream-enabled {selection} image will be built before flashing.\n"
+                "The viewer reconstructs the native 128×160 RGB565 display stream.\n"
+            )
+            pre_flash_steps.append(
+                (
+                    f"Build stream-enabled {selection}",
+                    local_tool_command(STREAM_BUILD_TOOL, ["--app", selection]),
                     False,
                 )
             )
@@ -812,6 +919,8 @@ class RazManager(tk.Tk):
                 f"\nLauncher level: {self.launcher_level_var.get()}\n"
                 f"Coil profile: {self.coil_profile_var.get()}\n"
             )
+        if stream_enabled:
+            config_note += "\nSWD screen streamer: included\n"
         if not messagebox.askyesno(
             "Flash application?",
             f"{backup_note}Flash this image?\n\n{image_path.name}{build_note}{config_note}\n"
@@ -832,6 +941,38 @@ class RazManager(tk.Tk):
 
 
 def main() -> int:
+    if "--internal-tool" in sys.argv:
+        index = sys.argv.index("--internal-tool")
+        if index + 1 >= len(sys.argv):
+            print("ERROR: missing internal tool name")
+            return 2
+        tool_name = sys.argv[index + 1]
+        sys.argv = [tool_name, *sys.argv[index + 2 :]]
+        try:
+            if tool_name == "fast_flash":
+                from fast_flash import main as tool_main
+            elif tool_name == "build_launcher_with_photos":
+                from build_launcher_with_photos import main as tool_main
+            elif tool_name == "build_slideshow_with_photos":
+                from build_slideshow_with_photos import main as tool_main
+            elif tool_name == "build_streamable_app":
+                from build_streamable_app import main as tool_main
+            else:
+                print(f"ERROR: unknown internal tool {tool_name}")
+                return 2
+            return tool_main()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            print(f"ERROR: {exc}")
+            return 1
+    if "--screen-streamer" in sys.argv:
+        port = ""
+        if "--port" in sys.argv:
+            index = sys.argv.index("--port")
+            if index + 1 < len(sys.argv):
+                port = sys.argv[index + 1]
+        from raz_screen_streamer import run_screen_streamer
+
+        return run_screen_streamer(port)
     app = RazManager()
     app.mainloop()
     return 0

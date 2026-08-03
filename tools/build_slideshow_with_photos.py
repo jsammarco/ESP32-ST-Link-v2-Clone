@@ -18,19 +18,19 @@ import tempfile
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(os.environ.get("RAZ_REPO_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 SLIDESHOW_DIR = REPO_ROOT / "RAZ Vape Apps" / "Slideshow"
 BUILD_SCRIPT = SLIDESHOW_DIR / "build_slideshow.bat"
 MAX_PHOTOS = 3
 SUPPORTED_PHOTO_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 CUSTOM_APP_NAME = "slideshow-photos"
-CUSTOM_IMAGE = SLIDESHOW_DIR / "build" / f"{CUSTOM_APP_NAME}.bin"
 GENERATED_HEADER = SLIDESHOW_DIR / "generated" / "photos.h"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--photos", type=Path, nargs="+", required=True, metavar="PHOTO")
+    parser.add_argument("--screen-stream", action="store_true", help="include the SWD screen mirror")
     return parser.parse_args()
 
 
@@ -86,6 +86,7 @@ def main() -> int:
     if not BUILD_SCRIPT.is_file():
         raise RuntimeError(f"Build script not found: {BUILD_SCRIPT}")
     sdk = find_vaporware_sdk()
+    output_name = CUSTOM_APP_NAME + ("-stream" if args.screen_stream else "")
 
     print(f"Building Slideshow with {len(photos)} selected photo(s)...")
     for index, photo in enumerate(photos, start=1):
@@ -103,7 +104,9 @@ def main() -> int:
             environment = os.environ.copy()
             environment["VAPORWARE"] = str(sdk)
             environment["SLIDESHOW_PHOTOS"] = str(staging)
-            environment["SLIDESHOW_APP_NAME"] = CUSTOM_APP_NAME
+            environment["SLIDESHOW_APP_NAME"] = output_name
+            if args.screen_stream:
+                environment["SCREEN_STREAMER"] = "1"
             result = subprocess.run(["cmd.exe", "/d", "/c", "build_slideshow.bat"], cwd=SLIDESHOW_DIR, env=environment)
             if result.returncode != 0:
                 return result.returncode
@@ -114,7 +117,7 @@ def main() -> int:
         else:
             GENERATED_HEADER.write_bytes(original_header)
 
-    image = CUSTOM_IMAGE
+    image = SLIDESHOW_DIR / "build" / f"{output_name}.bin"
     if not image.is_file():
         raise RuntimeError(f"Build completed without producing {image}")
     if image.stat().st_size > 60 * 1024:

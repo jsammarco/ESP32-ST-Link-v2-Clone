@@ -19,11 +19,10 @@ from pathlib import Path
 from build_slideshow_with_photos import find_vaporware_sdk, validate_photos
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(os.environ.get("RAZ_REPO_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 LAUNCHER_DIR = REPO_ROOT / "RAZ Vape Apps" / "Launcher"
 BUILD_SCRIPT = LAUNCHER_DIR / "build_launcher.bat"
 CUSTOM_APP_NAME = "launcher-custom"
-CUSTOM_IMAGE = LAUNCHER_DIR / "build" / f"{CUSTOM_APP_NAME}.bin"
 GENERATED_HEADER = LAUNCHER_DIR / "generated" / "photos.h"
 BUNDLE_APPS = ("Tetris", "Flappy", "Slideshow")
 
@@ -32,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apps", nargs="+", required=True, choices=BUNDLE_APPS, metavar="APP")
     parser.add_argument("--photos", type=Path, nargs="*", metavar="PHOTO")
+    parser.add_argument("--screen-stream", action="store_true", help="include the SWD screen mirror")
     return parser.parse_args()
 
 
@@ -52,6 +52,8 @@ def main() -> int:
     if not BUILD_SCRIPT.is_file():
         raise RuntimeError(f"Build script not found: {BUILD_SCRIPT}")
     sdk = find_vaporware_sdk()
+    output_name = CUSTOM_APP_NAME + ("-stream" if args.screen_stream else "")
+    custom_image = LAUNCHER_DIR / "build" / f"{output_name}.bin"
 
     print("Building Launcher bundle: " + " + ".join(apps))
     if photos:
@@ -64,9 +66,11 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="raz-launcher-") as temporary:
             environment = os.environ.copy()
             environment["VAPORWARE"] = str(sdk)
-            environment["LAUNCHER_APP_NAME"] = CUSTOM_APP_NAME
+            environment["LAUNCHER_APP_NAME"] = output_name
             environment["LAUNCHER_APP_1"] = apps[0]
             environment["LAUNCHER_APP_2"] = apps[1] if len(apps) == 2 else "None"
+            if args.screen_stream:
+                environment["SCREEN_STREAMER"] = "1"
             if photos:
                 staging = Path(temporary)
                 for index, photo in enumerate(photos, start=1):
@@ -87,13 +91,13 @@ def main() -> int:
             else:
                 GENERATED_HEADER.write_bytes(original_header)
 
-    if not CUSTOM_IMAGE.is_file():
-        raise RuntimeError(f"Build completed without producing {CUSTOM_IMAGE}")
-    if CUSTOM_IMAGE.stat().st_size > 60 * 1024:
+    if not custom_image.is_file():
+        raise RuntimeError(f"Build completed without producing {custom_image}")
+    if custom_image.stat().st_size > 60 * 1024:
         raise RuntimeError(
-            f"Launcher image is {CUSTOM_IMAGE.stat().st_size:,} bytes; safe limit is 61,440 bytes."
+            f"Launcher image is {custom_image.stat().st_size:,} bytes; safe limit is 61,440 bytes."
         )
-    print(f"Built {CUSTOM_IMAGE} ({CUSTOM_IMAGE.stat().st_size:,} bytes).")
+    print(f"Built {custom_image} ({custom_image.stat().st_size:,} bytes).")
     return 0
 
 

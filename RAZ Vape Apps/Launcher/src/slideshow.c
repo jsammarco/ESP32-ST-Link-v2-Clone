@@ -21,7 +21,11 @@
 #define NORMAL_MAX_MS          1800u
 #define BOOST_MAX_MS            900u
 #define NORMAL_ON_FRAME(frame) (((frame) & 1u) == 0u)
+#ifdef SCREEN_STREAMER
+#define IMAGE_CHUNK_ROWS         4u
+#else
 #define IMAGE_CHUNK_ROWS        16u
+#endif
 
 /* Launcher-only output profile. The ESP32 configuration tool writes one of
  * these values to NV_KEY_APP_2. Values outside this signed format fall back

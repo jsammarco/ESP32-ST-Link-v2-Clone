@@ -117,6 +117,52 @@ changes. The GUI locates PlatformIO (including the standard
 selected ESP32 port, and does not communicate with or alter the vape during
 that operation.
 
+### Live screen streaming
+
+Check **Add full-resolution SWD screen streamer (128×160)** before flashing
+Launcher, Tetris, Flappy, or Slideshow. The Manager builds a separate
+`*-stream.bin` image and leaves each normal prebuilt image unchanged. For
+Launcher, the stream covers its menu and every selected module, including
+Flappy, Tetris, and Slideshow.
+
+After upgrading from the older 64x80 streamer, run **Update ESP32 firmware...**
+once and reflash the selected RAZ app with the full-resolution streamer checked;
+both ends use the new command-stream protocol.
+
+After flashing, choose **Open screen viewer**. The viewer reads the live mirror
+through the same two SWD wires and ESP32 COM port; it can save the current
+screen as a 128x160 PNG or record an uncompressed 128x160 AVI without ffmpeg,
+OpenCV, or extra display wiring. Close the viewer before running another
+Manager operation because the COM port can have only one owner.
+
+The viewer reconstructs the native 128x160 RGB565 display, including one-pixel
+detail and full photo gradients. A complete framebuffer would need 40,960 bytes,
+but the N32G031 has only 8 KB of SRAM (including its stack). The optional target
+firmware therefore sends the exact LCD drawing commands through a 3 KB ring
+buffer; the 40,960-byte framebuffer lives on the PC. The ESP32 resets the app
+when a viewer connects so its reconstruction includes the complete first screen.
+Attainable update rate depends on how much of the display changes and on SWD
+wiring quality. Screen-enabled Slideshow builds use smaller decode chunks so the
+stream and application remain inside the MCU's RAM limit.
+
+The viewer is also directly runnable:
+
+```powershell
+python .\tools\raz_screen_streamer.py --port COM7
+```
+
+To package the Manager and viewer as one Windows executable, install
+PyInstaller and run:
+
+```powershell
+python -m pip install pyinstaller pyserial
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build_raz_manager.ps1
+```
+
+The result is `dist\RAZ-ESP32-Manager.exe`. Keep the `dist` directory in this
+repository so the packaged Manager can find the app sources and build scripts;
+the screen viewer itself is embedded as an internal mode of that executable.
+
 ### Launcher pre-flash options
 
 When **Launcher** is selected, the GUI also presents settings that are applied
@@ -298,6 +344,7 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 |---|---|
 | `Access is denied` for `COM7` | Close PlatformIO Monitor, the serial bridge, and any other serial program. |
 | `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
+| `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
 | `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain the 100 ohm resistors, charge the device, and rerun the read-only probe before retrying. |
 | Screen does not return immediately after `DONE` | Verify the latest ESP32 firmware was uploaded, then power-cycle/reset the target before attempting another flash. |
 

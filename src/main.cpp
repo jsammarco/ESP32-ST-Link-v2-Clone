@@ -59,7 +59,16 @@ constexpr uint32_t FAST_HALF_CYCLE_US = 2;
 constexpr size_t FAST_APP_MAX_BYTES = 60 * 1024;
 constexpr size_t FAST_IMAGE_MAX_BYTES = 64 * 1024;
 constexpr size_t TARGET_RAM_BYTES = 8 * 1024;
+constexpr size_t TARGET_APP_RAM_BYTES = 6 * 1024;
 constexpr uint32_t FLASH_BASE = 0x08000000;
+constexpr uint32_t RAM_BASE = 0x20000000;
+constexpr uint32_t STREAM_MAGIC_0 = 0x535A4152U;
+constexpr uint32_t STREAM_MAGIC_1 = 0x32444D43U;
+constexpr uint32_t STREAM_TOKEN_0 = 0xC17EA55AU;
+constexpr uint32_t STREAM_TOKEN_1 = 0x5AA57E1CU;
+constexpr size_t STREAM_DESCRIPTOR_BYTES = 9 * sizeof(uint32_t);
+constexpr size_t STREAM_MAX_RING_BYTES = 4 * 1024;
+constexpr size_t STREAM_SERIAL_CHUNK_BYTES = 512;
 constexpr uint32_t FLASH_PAGE_SIZE = 512;
 constexpr uint32_t NV_BASE = FLASH_BASE + 60 * 1024;
 constexpr uint32_t NV_MAGIC = 0xA55A0000U;
@@ -394,6 +403,110 @@ bool fast_mem_write32_sync(uint32_t address, uint32_t value) {
 
 bool fast_mem_read32(uint32_t address, uint32_t *value) {
   return fast_ap_write(AP_TAR, address) && fast_ap_read(AP_DRW, value);
+}
+
+bool fast_ap_read_posted(uint8_t address, uint32_t *value) {
+  for (uint8_t attempt = 0; attempt < 8; ++attempt) {
+    uint8_t ack = 0;
+    if (fast_swd_transfer(true, true, address, 0, value, &ack)) {
+      return true;
+    }
+    if (ack != SWD_ACK_WAIT) {
+      return false;
+    }
+  }
+  return false;
+}
+
+void store_word_le(uint8_t *destination, uint32_t value) {
+  destination[0] = static_cast<uint8_t>(value);
+  destination[1] = static_cast<uint8_t>(value >> 8);
+  destination[2] = static_cast<uint8_t>(value >> 16);
+  destination[3] = static_cast<uint8_t>(value >> 24);
+}
+
+uint32_t load_word_le(const uint8_t *source) {
+  return static_cast<uint32_t>(source[0]) |
+      (static_cast<uint32_t>(source[1]) << 8) |
+      (static_cast<uint32_t>(source[2]) << 16) |
+      (static_cast<uint32_t>(source[3]) << 24);
+}
+
+bool fast_mem_read_block(uint32_t address, uint8_t *destination, size_t size) {
+  if ((address & 3U) != 0 || (size & 3U) != 0) {
+    return false;
+  }
+
+  size_t completed = 0;
+  while (completed < size) {
+    // Most Cortex-M AHB-APs wrap auto-incrementing TAR at a 1 KB boundary.
+    // Split there so a frame read never silently loops over the same RAM.
+    const uint32_t chunk_address = address + completed;
+    size_t chunk_size = 0x400U - (chunk_address & 0x3FFU);
+    if (chunk_size > size - completed) {
+      chunk_size = size - completed;
+    }
+    const size_t word_count = chunk_size / 4U;
+    uint32_t discard = 0;
+    if (!fast_ap_write(AP_TAR, chunk_address) ||
+        !fast_ap_read_posted(AP_DRW, &discard)) {
+      return false;
+    }
+
+    for (size_t word = 0; word + 1 < word_count; ++word) {
+      uint32_t value = 0;
+      if (!fast_ap_read_posted(AP_DRW, &value)) {
+        return false;
+      }
+      store_word_le(destination + completed + word * 4U, value);
+    }
+    uint32_t final_value = 0;
+    if (!fast_dp_read(DP_RDBUFF, &final_value)) {
+      return false;
+    }
+    store_word_le(destination + completed + (word_count - 1U) * 4U, final_value);
+    completed += chunk_size;
+    yield();
+  }
+  return true;
+}
+
+bool fast_mem_read_bytes(uint32_t address, uint8_t *destination, size_t size) {
+  while (size != 0 && (address & 3U) != 0) {
+    uint32_t value = 0;
+    if (!fast_mem_read32(address & ~3UL, &value)) {
+      return false;
+    }
+    const uint8_t offset = static_cast<uint8_t>(address & 3U);
+    const size_t word_remaining = static_cast<size_t>(4U - offset);
+    const size_t take = (size < word_remaining) ? size : word_remaining;
+    for (size_t index = 0; index < take; ++index) {
+      destination[index] = static_cast<uint8_t>(value >> ((offset + index) * 8U));
+    }
+    address += take;
+    destination += take;
+    size -= take;
+  }
+
+  const size_t aligned = size & ~static_cast<size_t>(3U);
+  if (aligned != 0) {
+    if (!fast_mem_read_block(address, destination, aligned)) {
+      return false;
+    }
+    address += aligned;
+    destination += aligned;
+    size -= aligned;
+  }
+  if (size != 0) {
+    uint32_t value = 0;
+    if (!fast_mem_read32(address, &value)) {
+      return false;
+    }
+    for (size_t index = 0; index < size; ++index) {
+      destination[index] = static_cast<uint8_t>(value >> (index * 8U));
+    }
+  }
+  return true;
 }
 
 bool fast_flash_wait_idle() {
@@ -853,7 +966,170 @@ void fast_restore_command() {
   Serial.println("DONE");
 }
 
+struct ScreenStreamInfo {
+  uint32_t descriptor_address;
+  uint32_t ring_address;
+  uint32_t ring_bytes;
+  uint32_t token_address;
+  uint8_t width;
+  uint8_t height;
+  uint8_t bits_per_pixel;
+};
+
+bool find_screen_stream_descriptor(ScreenStreamInfo *info) {
+  if (!fast_mem_read_block(RAM_BASE, fast_image, TARGET_APP_RAM_BYTES)) {
+    return false;
+  }
+
+  for (size_t offset = 0; offset + STREAM_DESCRIPTOR_BYTES <= TARGET_APP_RAM_BYTES;
+       offset += 4U) {
+    if (load_word_le(fast_image + offset) != STREAM_MAGIC_0 ||
+        load_word_le(fast_image + offset + 4U) != STREAM_MAGIC_1) {
+      continue;
+    }
+    const uint32_t geometry = load_word_le(fast_image + offset + 8U);
+    const uint32_t ring_address = load_word_le(fast_image + offset + 12U);
+    const uint32_t ring_bytes = load_word_le(fast_image + offset + 16U);
+    const uint32_t token_address = load_word_le(fast_image + offset + 28U);
+    const uint8_t candidate_width = static_cast<uint8_t>(geometry >> 24);
+    const uint8_t candidate_height = static_cast<uint8_t>(geometry >> 16);
+    const uint8_t candidate_bpp = static_cast<uint8_t>(geometry >> 8);
+    const uint8_t version = static_cast<uint8_t>(geometry);
+
+    if (version != 2U || candidate_width != 128U || candidate_height != 160U ||
+        candidate_bpp != 16U || ring_bytes < 256U ||
+        ring_bytes > STREAM_MAX_RING_BYTES || (ring_bytes & 3U) != 0 ||
+        (ring_address & 3U) != 0 || ring_address < RAM_BASE ||
+        ring_address + ring_bytes > RAM_BASE + TARGET_APP_RAM_BYTES ||
+        (token_address & 3U) != 0 || token_address < RAM_BASE ||
+        token_address + 8U > RAM_BASE + TARGET_RAM_BYTES) {
+      continue;
+    }
+    info->descriptor_address = RAM_BASE + offset;
+    info->ring_address = ring_address;
+    info->ring_bytes = ring_bytes;
+    info->token_address = token_address;
+    info->width = candidate_width;
+    info->height = candidate_height;
+    info->bits_per_pixel = candidate_bpp;
+    return true;
+  }
+  return false;
+}
+
+void send_stream_commands(const uint8_t *commands, size_t command_bytes) {
+  const uint8_t packet_magic[4] = {'R', 'Z', 'C', '2'};
+  const uint8_t length[2] = {
+      static_cast<uint8_t>(command_bytes),
+      static_cast<uint8_t>(command_bytes >> 8),
+  };
+  Serial.write(packet_magic, sizeof(packet_magic));
+  Serial.write(length, sizeof(length));
+  Serial.write(commands, command_bytes);
+  Serial.flush();
+}
+
+bool set_screen_stream_token(uint32_t token_address, bool enabled) {
+  if (enabled) {
+    return fast_mem_write32_sync(token_address, STREAM_TOKEN_0) &&
+           fast_mem_write32_sync(token_address + 4U, STREAM_TOKEN_1);
+  }
+  return fast_mem_write32_sync(token_address + 4U, 0U) &&
+         fast_mem_write32_sync(token_address, 0U);
+}
+
+void fast_screen_stream_command() {
+  uint32_t dpidr = 0;
+  if (!fast_enable_debug(&dpidr)) {
+    Serial.println("ERR CONNECT");
+    return;
+  }
+
+  ScreenStreamInfo info{};
+  if (!find_screen_stream_descriptor(&info)) {
+    Serial.println("ERR NO_STREAM_APP");
+    return;
+  }
+
+  // Arm capture in no-init SRAM, then reset so the viewer receives every draw
+  // from the app's first screen. The target may briefly block on a full ring
+  // while this ESP32 reconnects; its producer feeds IWDG during that wait.
+  if (!set_screen_stream_token(info.token_address, true) || !fast_reset_target()) {
+    Serial.println("ERR STREAM_ARM");
+    return;
+  }
+  delay(25);
+  bool reconnected = false;
+  for (uint8_t attempt = 0; attempt < 10U; ++attempt) {
+    if (fast_enable_debug(&dpidr)) {
+      reconnected = true;
+      break;
+    }
+    delay(10);
+  }
+  if (!reconnected || !find_screen_stream_descriptor(&info) ||
+      !fast_mem_write32_sync(info.descriptor_address + 24U, 0U)) {
+    Serial.println("ERR STREAM_RECONNECT");
+    return;
+  }
+
+  Serial.printf("STREAM %u %u %u %u %08lX\n",
+                static_cast<unsigned>(info.width), static_cast<unsigned>(info.height),
+                static_cast<unsigned>(info.bits_per_pixel), 0U,
+                static_cast<unsigned long>(dpidr));
+  uint32_t tail = 0U;
+  while (true) {
+    if (Serial.available() > 0) {
+      const int command = Serial.read();
+      if (command == 'Q') {
+        (void)set_screen_stream_token(info.token_address, false);
+        end_transaction();
+        return;
+      }
+    }
+
+    uint32_t head = 0U;
+    if (!fast_mem_read32(info.descriptor_address + 20U, &head) ||
+        head >= info.ring_bytes) {
+      const uint8_t error_packet[8] = {'R', 'Z', 'E', '2', 0, 0, 0, 0};
+      Serial.write(error_packet, sizeof(error_packet));
+      Serial.flush();
+      (void)set_screen_stream_token(info.token_address, false);
+      return;
+    }
+    if (head == tail) {
+      delay(1);
+      continue;
+    }
+
+    size_t available = (head > tail) ? head - tail : info.ring_bytes - tail;
+    if (available > STREAM_SERIAL_CHUNK_BYTES) {
+      available = STREAM_SERIAL_CHUNK_BYTES;
+    }
+    if (!fast_mem_read_bytes(info.ring_address + tail, fast_image, available)) {
+      const uint8_t error_packet[8] = {'R', 'Z', 'E', '2', 0, 0, 0, 0};
+      Serial.write(error_packet, sizeof(error_packet));
+      Serial.flush();
+      (void)set_screen_stream_token(info.token_address, false);
+      return;
+    }
+    send_stream_commands(fast_image, available);
+    tail += available;
+    if (tail == info.ring_bytes) {
+      tail = 0U;
+    }
+    if (!fast_mem_write32_sync(info.descriptor_address + 24U, tail)) {
+      (void)set_screen_stream_token(info.token_address, false);
+      return;
+    }
+  }
+}
+
 void handle_command(uint8_t command) {
+  if (command == 'Y') {
+    Serial.println("RAZ_ESP32 2 STREAM_CMD2");
+    return;
+  }
   if (command == 'I') {
     fast_probe_command();
     return;
@@ -876,6 +1152,10 @@ void handle_command(uint8_t command) {
   }
   if (command == 'X') {
     fast_restore_command();
+    return;
+  }
+  if (command == 'S') {
+    fast_screen_stream_command();
     return;
   }
 

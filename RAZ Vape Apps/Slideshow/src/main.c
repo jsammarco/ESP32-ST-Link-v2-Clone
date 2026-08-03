@@ -32,7 +32,11 @@
  * producing approximately 50% duty; Boost drives continuously. */
 #define NORMAL_ON_FRAME(frame) (((frame) & 1u) == 0u)
 
+#ifdef SCREEN_STREAMER
+#define IMAGE_CHUNK_ROWS 4u
+#else
 #define IMAGE_CHUNK_ROWS 16u
+#endif
 
 /* PA6 battery monitor. These guard bands intentionally match the Launcher:
  * the display is an estimate, while the low-voltage lockout protects the coil. */
