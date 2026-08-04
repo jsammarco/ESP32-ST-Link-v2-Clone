@@ -62,6 +62,7 @@ FLASH_TOOL = Path(__file__).resolve().with_name("fast_flash.py")
 SLIDESHOW_BUILD_TOOL = Path(__file__).resolve().with_name("build_slideshow_with_photos.py")
 LAUNCHER_BUILD_TOOL = Path(__file__).resolve().with_name("build_launcher_with_photos.py")
 STREAM_BUILD_TOOL = Path(__file__).resolve().with_name("build_streamable_app.py")
+BROWSER_BUILD_TOOL = Path(__file__).resolve().with_name("build_raz_browser.py")
 SCREEN_STREAMER_TOOL = Path(__file__).resolve().with_name("raz_screen_streamer.py")
 BACKUP_ROOT = REPO_ROOT / "backups"
 FULL_FLASH_BYTES = FLASH_TOTAL_BYTES
@@ -69,6 +70,7 @@ NV_LINE = re.compile(r"^NV\s+(\d+)\s+(NONE|[0-9A-Fa-f]{8})$")
 FLASH_USAGE_LINE = re.compile(r"^FLASH_USAGE\s+(\d+)\s+(\d+)\s+(\d+)")
 
 APPS = {
+    "RAZ Browser": REPO_ROOT / "firmware" / "n32g031-poc" / "build" / "raz_esp32_poc.bin",
     "Launcher": REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher.bin",
     "Tetris": REPO_ROOT / "RAZ Vape Apps" / "Tetris" / "build" / "tetris.bin",
     "Pac-Man": REPO_ROOT / "RAZ Vape Apps" / "Pacman" / "build" / "pacman.bin",
@@ -80,6 +82,8 @@ APPS = {
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy.bin",
 }
+RAZ_BROWSER_APP = "RAZ Browser"
+RAZ_BROWSER_ESTIMATE_BYTES = 16 * 1024
 SLIDESHOW_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos.bin"
 LAUNCHER_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-custom.bin"
 NV_LABELS = {
@@ -144,6 +148,8 @@ class RazManager(tk.Tk):
         # Build steps run as ordinary local commands; hardware steps use the
         # selected ESP32 serial port through fast_flash.py.
         self.pending_steps: list[tuple[str, list[str], bool]] = []
+        # ESP32 firmware upload alone gets one retry after a transport failure.
+        self.failure_retry_step: tuple[str, list[str], bool] | None = None
         self.port_var = tk.StringVar()
         self.app_var = tk.StringVar(value="Launcher")
         self.backup_name_var = tk.StringVar()
@@ -222,14 +228,20 @@ class RazManager(tk.Tk):
             command=self.enable_esp32_runtime,
         )
         runtime_mode.grid(row=0, column=2, sticky="w", padx=(8, 0))
-        self.action_widgets.extend([get_mode, programmer_mode, runtime_mode])
+        diagnostics = ttk.Button(
+            mode_frame,
+            text="Link diagnostics",
+            command=self.get_esp32_diagnostics,
+        )
+        diagnostics.grid(row=0, column=3, sticky="w", padx=(8, 0))
+        self.action_widgets.extend([get_mode, programmer_mode, runtime_mode, diagnostics])
         ttk.Label(
             mode_frame,
             text=("One integrated ESP32 image provides both modes. Shared GPIO25/GPIO26 stay high-Z while "
                   "the programmer is idle; Wi-Fi runtime only drives its TX line after the vape sends PING."),
             foreground="#444444",
             wraplength=760,
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         read_frame = ttk.LabelFrame(main, text="Read only", padding=10)
         read_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(12, 0))
@@ -250,10 +262,10 @@ class RazManager(tk.Tk):
         write_frame.columnconfigure(1, weight=1)
         flash_tip = tk.Label(
             write_frame,
-            text=("SAFETY: Select the correct coil-output pin from the physical board marking. "
-                  "Remove the cartridge when changing profiles. After confirming Flash, hold the vape's physical button. "
-                  "Keep holding until the operation log shows ERASE 1/...; then release. "
-                  "If automatic backup is enabled, it runs before erasing starts."),
+            text=("SAFETY: Select the correct coil-output pin and remove the cartridge when changing profiles. "
+                  "For the current RAZ Browser, use its SWD Recovery menu and wait for SWD ACTIVE before flashing. "
+                  "An older Browser requires a real N32 reset/power cycle with its button held. Keep recovery active "
+                  "until IDR/ERASE. The Manager verifies SWD before backup or erase."),
             anchor="w",
             justify="left",
             wraplength=700,
@@ -471,6 +483,12 @@ class RazManager(tk.Tk):
         if selection == CUSTOM_APP:
             self.screen_stream_var.set(False)
             self.choose_custom_image()
+        elif selection == RAZ_BROWSER_APP:
+            self.screen_stream_var.set(False)
+            self.coil_output_var.set(COIL_OUTPUTS["disabled"]["label"])
+            self.custom_image_var.set(
+                "Heater-disabled Wi-Fi/text-browser firmware; rebuilt before flashing."
+            )
         elif selection == "Doom":
             # Doom can be rebuilt for any coil output, but its standalone
             # build does not yet contain the optional SWD display wrapper.
@@ -533,6 +551,12 @@ class RazManager(tk.Tk):
                 False,
                 "Projected Launcher build",
             )
+        if selection == RAZ_BROWSER_APP:
+            browser_image = APPS[RAZ_BROWSER_APP]
+            size, exact = selected_image_bytes(browser_image, None, False)
+            if exact:
+                return size, True, "Exact RAZ Browser image"
+            return RAZ_BROWSER_ESTIMATE_BYTES, False, "Projected RAZ Browser build"
         if selection == "Slideshow" and self.slideshow_photos:
             unmarked_size = (
                 SLIDESHOW_COMMON_ESTIMATE_BYTES
@@ -653,11 +677,15 @@ class RazManager(tk.Tk):
         combo_state = "readonly" if launcher_state == "normal" else "disabled"
         self.launcher_level_box.configure(state=combo_state)
         self.coil_profile_box.configure(state=combo_state)
-        coil_output_state = "readonly" if self.app_var.get() != CUSTOM_APP and self.process is None else "disabled"
+        coil_output_state = (
+            "readonly"
+            if self.app_var.get() not in {CUSTOM_APP, RAZ_BROWSER_APP} and self.process is None
+            else "disabled"
+        )
         self.coil_output_box.configure(state=coil_output_state)
         stream_state = (
             "normal"
-            if self.app_var.get() not in {CUSTOM_APP, "Doom"} and self.process is None
+            if self.app_var.get() not in {CUSTOM_APP, "Doom", RAZ_BROWSER_APP} and self.process is None
             else "disabled"
         )
         self.screen_stream_check.configure(state=stream_state)
@@ -831,6 +859,7 @@ class RazManager(tk.Tk):
             )
         except OSError as exc:
             self.process = None
+            self.failure_retry_step = None
             self.set_actions_enabled(True)
             messagebox.showerror("Could not start operation", str(exc))
             return
@@ -854,6 +883,7 @@ class RazManager(tk.Tk):
 
         self.cancel_requested = True
         self.pending_steps.clear()
+        self.failure_retry_step = None
         self.cancel_button.configure(state="disabled")
         self.status_var.set(
             f"Stopping the PC-side {action} process. Keep the ESP32 and vape connected if programming had started."
@@ -893,13 +923,19 @@ class RazManager(tk.Tk):
             icon="warning",
         ):
             return
-        self.run_command(
-            "Update ESP32 firmware",
-            [platformio, "run", "--target", "upload", "--upload-port", port],
+        command = [platformio, "run", "--target", "upload", "--upload-port", port]
+        self.failure_retry_step = (
+            "Retry ESP32 firmware upload (attempt 2 of 2)",
+            command,
+            False,
         )
+        self.run_command("Update ESP32 firmware (attempt 1 of 2)", command)
 
     def get_esp32_mode(self) -> None:
         self.run_tool("Reading ESP32 mode", ["--esp32-mode"])
+
+    def get_esp32_diagnostics(self) -> None:
+        self.run_tool("Reading runtime link diagnostics", ["--esp32-diagnostics"])
 
     def enable_esp32_runtime(self) -> None:
         port = self.selected_port()
@@ -978,6 +1014,7 @@ class RazManager(tk.Tk):
         if self.cancel_requested:
             self.cancel_requested = False
             self.pending_steps.clear()
+            self.failure_retry_step = None
             self.set_actions_enabled(True)
             self.append_log(f"{action} cancelled on the PC.")
             self.status_var.set(
@@ -985,6 +1022,7 @@ class RazManager(tk.Tk):
             )
             return
         if return_code == 0:
+            self.failure_retry_step = None
             if self.pending_steps:
                 self.start_next_pending_step()
                 return
@@ -993,6 +1031,17 @@ class RazManager(tk.Tk):
                 self.value_text_var.set(self.format_values())
             self.status_var.set(f"{action} completed successfully.")
         else:
+            if self.failure_retry_step is not None:
+                retry_action, retry_arguments, uses_fast_flash_tool = self.failure_retry_step
+                self.failure_retry_step = None
+                self.append_log(
+                    f"{action} lost the ESP32 connection; starting the single automatic retry."
+                )
+                if uses_fast_flash_tool:
+                    self.run_tool(retry_action, retry_arguments)
+                else:
+                    self.run_command(retry_action, retry_arguments)
+                return
             self.pending_steps.clear()
             self.set_actions_enabled(True)
             self.status_var.set(f"{action} failed. See the operation log.")
@@ -1139,7 +1188,7 @@ class RazManager(tk.Tk):
             selection == "Launcher" and "Slideshow" in launcher_apps
         )
         building_selected_photos = slideshow_selected and bool(self.slideshow_photos)
-        stream_enabled = self.screen_stream_var.get() and selection != CUSTOM_APP
+        stream_enabled = self.screen_stream_var.get() and selection not in {CUSTOM_APP, RAZ_BROWSER_APP}
         if selection == CUSTOM_APP:
             if self.custom_image_path is None or not self.custom_image_path.is_file():
                 if self.choose_custom_image() is None:
@@ -1147,6 +1196,8 @@ class RazManager(tk.Tk):
             image_path = self.custom_image_path
             if image_path is None:
                 return
+        elif selection == RAZ_BROWSER_APP:
+            image_path = APPS[RAZ_BROWSER_APP]
         elif selection == "Launcher":
             image_path = self.configured_image_path(LAUNCHER_CUSTOM_IMAGE, screen_stream=stream_enabled)
         elif building_selected_photos:
@@ -1183,6 +1234,7 @@ class RazManager(tk.Tk):
             selection == "Launcher"
             or building_selected_photos
             or stream_enabled
+            or selection == RAZ_BROWSER_APP
             or (selection != CUSTOM_APP and coil_output != "pa5")
             or selection in FRESH_BUILD_APPS
         )
@@ -1221,6 +1273,21 @@ class RazManager(tk.Tk):
                 (
                     "Build Launcher: " + " + ".join(launcher_apps),
                     command,
+                    False,
+                )
+            )
+        elif selection == RAZ_BROWSER_APP:
+            if not local_tool_available(BROWSER_BUILD_TOOL):
+                messagebox.showerror("Missing RAZ Browser builder", f"Cannot find:\n{BROWSER_BUILD_TOOL}")
+                return
+            build_note = (
+                "\nA fresh heater-disabled RAZ Browser image will be built before flashing.\n"
+                "After flashing, use Enable Wi-Fi runtime in the ESP32 operating mode panel.\n"
+            )
+            pre_flash_steps.append(
+                (
+                    "Build RAZ Browser",
+                    local_tool_command(BROWSER_BUILD_TOOL, []),
                     False,
                 )
             )
@@ -1298,7 +1365,13 @@ class RazManager(tk.Tk):
                 f"\nLauncher level: {self.launcher_level_var.get()}\n"
                 f"Coil profile: {self.coil_profile_var.get()}\n"
             )
-        if selection == CUSTOM_APP:
+        if selection == RAZ_BROWSER_APP:
+            config_note += (
+                "\nHeater/firing output: disabled by the RAZ Browser firmware.\n"
+                "SWD screen streamer and coil remapping are not applied to this image.\n"
+                "ESP32 mode after flash: remains in SWD programmer mode until you select Wi-Fi runtime.\n"
+            )
+        elif selection == CUSTOM_APP:
             config_note += "\nCoil output: embedded in the custom binary; the Manager cannot remap it.\n"
         else:
             config_note += f"\nCoil output: {coil_config['label']}\n{coil_config['note']}\n"
@@ -1312,12 +1385,20 @@ class RazManager(tk.Tk):
         if not messagebox.askyesno(
             "Flash application?",
             f"{backup_note}Flash this image?\n\n{image_path.name}{build_note}{config_note}\n"
-            "The app region will be erased and reprogrammed. The reserved 4 KB settings region is preserved.",
+            "The app region will be erased and reprogrammed. The reserved 4 KB settings region is preserved.\n\n"
+            "RECOVERY CHECK: With the current RAZ Browser, first use its SWD Recovery menu and wait for SWD ACTIVE. "
+            "An older Browser must be genuinely reset/power-cycled while its button is held; merely holding the button "
+            "after boot is insufficient. The CC1/CC2/GND adapter cannot reset an older N32 build. Cancel unless the "
+            "vape already shows SWD ACTIVE or you can perform that real reset.",
             icon="warning",
         ):
             return
         flash_step = (f"Flash {image_path.name}", ["--flash", str(image_path)], True)
-        queued_steps = [*pre_flash_steps]
+        queued_steps = [
+            ("Enable ESP32 SWD programmer", ["--esp32-programmer"], True),
+            *pre_flash_steps,
+            ("Verify N32 SWD recovery", ["--probe"], True),
+        ]
         if self.backup_before_flash_var.get():
             destination = self.make_backup_destination()
             if destination is None:
@@ -1345,6 +1426,8 @@ def main() -> int:
                 from build_slideshow_with_photos import main as tool_main
             elif tool_name == "build_streamable_app":
                 from build_streamable_app import main as tool_main
+            elif tool_name == "build_raz_browser":
+                from build_raz_browser import main as tool_main
             else:
                 print(f"ERROR: unknown internal tool {tool_name}")
                 return 2

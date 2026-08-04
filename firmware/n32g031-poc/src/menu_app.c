@@ -5,12 +5,14 @@
 
 #include "button_gestures.h"
 #include "display_ui.h"
+#include "hardware.h"
 #include "protocol.h"
+#include "runtime_uart.h"
 #include "system.h"
 #include "text_keyboard.h"
 
 #define PING_INTERVAL_MS 2000u
-#define MENU_ITEMS 8u
+#define MENU_ITEMS 9u
 #define SITE_ITEMS 3u
 
 typedef enum {
@@ -24,6 +26,9 @@ typedef enum {
     SCREEN_BROWSER_LOADING,
     SCREEN_BROWSER,
     SCREEN_MESSAGE,
+    SCREEN_SWD_CONFIRM,
+    SCREEN_SWD_WAIT,
+    SCREEN_SWD_FORCE,
     SCREEN_ABOUT
 } screen_t;
 
@@ -68,17 +73,47 @@ static void go_to_menu(void)
         (g_keyboard_target == KEYBOARD_PASSWORD)) {
         text_keyboard_clear();
     }
+    if ((g_screen == SCREEN_SWD_WAIT) || (g_screen == SCREEN_SWD_FORCE)) {
+        protocol_cancel_swd_recovery();
+    }
     g_screen = SCREEN_MENU;
     display_ui_menu(g_menu_item);
+}
+
+static void enter_swd_recovery(void)
+{
+    /* Paint the final state while UART is still available, then detach USART
+     * and leave the MCU in a heater-disabled SWD service loop indefinitely. */
+    display_ui_swd_active();
+    delay_ms(30u);
+    runtime_uart_restore_swd();
+    for (;;) {
+        hardware_force_heater_off();
+        IWDG_FEED();
+    }
+}
+
+static void begin_swd_recovery(void)
+{
+    g_screen = SCREEN_SWD_WAIT;
+    display_ui_swd_recovery_wait(0u);
+    if (!protocol_request_swd_recovery()) {
+        g_screen = SCREEN_SWD_FORCE;
+        display_ui_swd_recovery_wait(1u);
+    }
+    g_seen_revision = protocol_revision();
 }
 
 static void begin_scan(bool for_connect)
 {
     g_scan_for_connect = for_connect;
-    (void)protocol_request_scan();
     g_screen = SCREEN_SCAN;
+    /* Finish the blocking LCD redraw before asking the ESP32 to reply. */
+    display_ui_scan(1u, 0u, "");
+    if (!protocol_request_scan()) {
+        display_ui_scan(0u, 0u, "SCAN REQUEST BUSY");
+    }
     g_seen_revision = protocol_revision();
-    display_ui_scan(1u, "");
 }
 
 static void begin_wifi_connection(void)
@@ -173,10 +208,11 @@ static void select_menu_item(void)
     switch (g_menu_item) {
     case 0u:
         g_screen = SCREEN_STATUS;
-        protocol_request_wifi_status();
         g_last_online = protocol_esp32_online();
         g_last_wifi_state = protocol_wifi_state();
         show_status();
+        /* Request the fresh status only after the full screen is painted. */
+        protocol_request_wifi_status();
         break;
     case 1u:
     case 5u:
@@ -210,6 +246,10 @@ static void select_menu_item(void)
         g_screen = SCREEN_WIFI;
         display_ui_wifi_progress(PROTOCOL_WIFI_DISCONNECTED, "", "DISCONNECTED");
         break;
+    case 7u:
+        g_screen = SCREEN_SWD_CONFIRM;
+        display_ui_swd_recovery_confirm();
+        break;
     default:
         g_screen = SCREEN_ABOUT;
         display_ui_about();
@@ -242,7 +282,8 @@ void menu_app_poll(void)
     protocol_poll();
     protocol_check_timeouts();
 
-    if ((uint16_t)(now - g_last_ping_ms) >= PING_INTERVAL_MS) {
+    if ((g_screen != SCREEN_SWD_WAIT) && (g_screen != SCREEN_SWD_FORCE) &&
+        ((uint16_t)(now - g_last_ping_ms) >= PING_INTERVAL_MS)) {
         g_last_ping_ms = now;
         protocol_send_ping();
     }
@@ -257,11 +298,13 @@ void menu_app_poll(void)
                 g_network_index = 0u;
                 show_network();
             } else if (*protocol_last_error() != '\0') {
-                display_ui_scan(0u, protocol_last_error());
+                display_ui_scan(0u, 0u, protocol_last_error());
             } else {
                 g_screen = SCREEN_NETWORKS;
                 display_ui_no_networks(g_scan_for_connect ? "SCAN BEFORE CONNECT" : "");
             }
+        } else if (g_screen == SCREEN_SCAN) {
+            display_ui_scan(1u, protocol_scan_acknowledged() ? 1u : 0u, "");
         } else if (g_screen == SCREEN_WIFI) {
             display_ui_wifi_progress(protocol_wifi_state(), protocol_wifi_ssid(),
                                      protocol_last_error());
@@ -276,6 +319,13 @@ void menu_app_poll(void)
                 g_screen = SCREEN_MESSAGE;
                 display_ui_message("BROWSER ERROR", protocol_last_error(),
                                    "DOUBLE PRESS BACK");
+            }
+        } else if (g_screen == SCREEN_SWD_WAIT) {
+            if (protocol_swd_recovery_ready()) {
+                enter_swd_recovery();
+            } else if (!protocol_swd_recovery_waiting()) {
+                g_screen = SCREEN_SWD_FORCE;
+                display_ui_swd_recovery_wait(1u);
             }
         }
     }
@@ -339,5 +389,7 @@ void menu_app_poll(void)
         else if ((g_screen == SCREEN_NETWORKS) && (protocol_ap_count() != 0u)) {
             begin_wifi_connection();
         } else if (g_screen == SCREEN_SITES) open_site();
+        else if (g_screen == SCREEN_SWD_CONFIRM) begin_swd_recovery();
+        else if (g_screen == SCREEN_SWD_FORCE) enter_swd_recovery();
     }
 }

@@ -36,6 +36,7 @@ void protocol_check_timeouts(void);
 
 bool protocol_request_scan(void);
 bool protocol_scan_active(void);
+bool protocol_scan_acknowledged(void);
 uint8_t protocol_ap_count(void);
 const protocol_ap_t *protocol_ap_at(uint8_t index);
 
@@ -57,6 +58,11 @@ uint8_t protocol_view_line_count(void);
 const protocol_web_line_t *protocol_view_line(uint8_t index);
 const char *protocol_web_title(void);
 bool protocol_document_truncated(void);
+
+bool protocol_request_swd_recovery(void);
+void protocol_cancel_swd_recovery(void);
+bool protocol_swd_recovery_waiting(void);
+bool protocol_swd_recovery_ready(void);
 
 bool protocol_esp32_online(void);
 const char *protocol_last_error(void);

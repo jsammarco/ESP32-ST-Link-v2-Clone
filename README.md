@@ -134,8 +134,10 @@ coil pin is determined by the code that produced them.
 The **ESP32 operating mode** panel queries the current mode or persistently
 selects **SWD programmer** and **Wi-Fi runtime**. Programmer-idle leaves both CC
 signal GPIOs high-impedance; runtime initially enables RX only and attaches TX
-after the N32 sends `PING`. Switch back to programmer mode and boot the N32 with
-its button held before attempting recovery SWD.
+after the N32 sends `PING`. The current Browser has a guarded **SWD Recovery**
+menu item: its second long press requests a safe ESP32 handoff, persists
+programmer mode, restores PA13/PA14 AF0, and displays `SWD ACTIVE`. Older Browser
+builds still require a real N32 reset with the button held.
 
 The N32 POC runtime can scan and connect to an AP, enter a password or custom URL
 with its one-button on-screen keyboard, and open Hackaday.com, Google.com, or a
@@ -143,6 +145,21 @@ custom address in a constrained text browser. The ESP32 validates HTTPS, parses
 HTML plus a small CSS subset, and sends only a ten-line viewport to the N32. In a
 page, one click scrolls down, double click scrolls up, and a 1.5-second hold
 returns to the menu. See the POC guide for keyboard controls and parser limits.
+
+**RAZ Browser** is also available in the Manager's normal **App** selector.
+Selecting it disables the unrelated coil-remapping and SWD-screen-streamer
+options, builds a fresh heater-disabled N32 image, optionally backs up the vape,
+and flashes it through the same verified app workflow. When flashing completes,
+use **Enable Wi-Fi runtime** in the ESP32 operating-mode panel. Before replacing
+this Browser again, use its on-device **SWD Recovery** item and wait for
+`SWD ACTIVE`, then start the Manager flash workflow.
+
+Use **Link diagnostics** after a failed scan. It reports whether any N32 UART
+bytes arrived, whether valid `PING` and `SCAN` commands were decoded, whether
+the ESP32 reply pin attached, and the Wi-Fi API's last scan result and AP count.
+The report includes a short interpretation in the Manager log. The N32 scan
+screen now distinguishes `CONTACTING ESP32` from `SCANNING`, and menu, site,
+and keyboard selection changes use small incremental redraws to avoid flashing.
 
 When **Launcher** is selected, choose one or more bundled apps from the
 **Launcher bundle** checkboxes. The available modules are Tetris, Pac-Man,
@@ -304,6 +321,7 @@ With the breakout connected and the target powered, run:
 
 ```powershell
 python tools\fast_flash.py --port COM7 --esp32-programmer
+python tools\fast_flash.py --port COM7 --esp32-diagnostics
 python tools\fast_flash.py --port COM7 --probe
 ```
 
@@ -441,6 +459,9 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 | `Access is denied` for `COM7` | Close PlatformIO Monitor, the serial bridge, and any other serial program. |
 | `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
 | `ERR MODE_RUNTIME` | Use **Enable SWD programmer** (or `--esp32-programmer`), reset the N32 while holding its button, then retry. |
+| `ERR CONNECT` while flashing RAZ Browser | The image built, but the N32 SWD port was unavailable. Hold the vape button while actually resetting/power-cycling the N32, keep it held, and obtain a successful **Test SWD connection** before flashing. Holding the button after boot does not enter recovery. |
+| `NO ESP32 SCAN REPLY` | The N32 did not receive `SCAN,STARTED`. Run **Link diagnostics** to separate no UART bytes, invalid PING, failed reply-pin attachment, and a missing SCAN command. |
+| `SCAN DID NOT FINISH` | The UART acknowledgment worked but the ESP32 radio did not complete within 15 seconds. Use **Link diagnostics** for the Wi-Fi scan result code. |
 | `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
 | Viewer reports an unknown display command | Reflash the app to get self-synchronizing stream records and reopen the viewer from the current Manager executable. |
 | `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain both series resistors (1 kΩ for the combined POC), charge the device, and rerun the read-only probe before retrying. |

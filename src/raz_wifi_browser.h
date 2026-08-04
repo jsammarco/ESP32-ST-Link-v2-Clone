@@ -12,6 +12,7 @@ void raz_browser_poll();
 
 bool raz_browser_start_scan();
 bool raz_browser_scan_active();
+void raz_browser_print_diagnostics();
 bool raz_browser_connect(uint8_t network_index, const char *password,
                          size_t password_length);
 void raz_browser_disconnect();

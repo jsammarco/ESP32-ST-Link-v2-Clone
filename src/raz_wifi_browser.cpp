@@ -139,6 +139,9 @@ RazHtmlRenderer renderer;
 bool document_ready = false;
 bool body_truncated = false;
 size_t viewport_top = 0U;
+int16_t last_scan_result = INT16_MIN;
+uint32_t scan_start_count = 0U;
+uint32_t scan_complete_count = 0U;
 
 void send_line(const char *line) {
   if (writer != nullptr) {
@@ -224,6 +227,8 @@ void send_scan_results() {
 
 void finish_scan(int16_t result) {
   scan_active = false;
+  last_scan_result = result;
+  ++scan_complete_count;
   if (result < 0) {
     WiFi.scanDelete();
     if (!scan_keep_radio) {
@@ -417,6 +422,9 @@ void raz_browser_init(RazBrowserLineWriter line_writer) {
   document_ready = false;
   body_truncated = false;
   viewport_top = 0U;
+  last_scan_result = INT16_MIN;
+  scan_start_count = 0U;
+  scan_complete_count = 0U;
   renderer.reset();
 }
 
@@ -446,6 +454,8 @@ bool raz_browser_start_scan() {
   }
   WiFi.scanDelete();
   network_count = 0U;
+  ++scan_start_count;
+  send_line("SCAN,STARTED");
   const int16_t result = WiFi.scanNetworks(true, true, false, 300U);
   if (result == WIFI_SCAN_RUNNING) {
     scan_active = true;
@@ -458,10 +468,24 @@ bool raz_browser_start_scan() {
   if (!scan_keep_radio) {
     WiFi.mode(WIFI_OFF);
   }
+  last_scan_result = result;
+  ++scan_complete_count;
   return false;
 }
 
 bool raz_browser_scan_active() { return scan_active; }
+
+void raz_browser_print_diagnostics() {
+  const char *state = link_state == LinkState::CONNECTED ? "CONNECTED" :
+      (link_state == LinkState::CONNECTING ? "CONNECTING" : "DISCONNECTED");
+  Serial.printf(
+      "DIAG WIFI SDK_STATUS=%d LINK=%s SCAN_ACTIVE=%u SCAN_STARTS=%lu "
+      "SCAN_DONE=%lu LAST_SCAN=%d APS=%u\n",
+      static_cast<int>(WiFi.status()), state, scan_active ? 1U : 0U,
+      static_cast<unsigned long>(scan_start_count),
+      static_cast<unsigned long>(scan_complete_count),
+      static_cast<int>(last_scan_result), static_cast<unsigned>(network_count));
+}
 
 bool raz_browser_connect(uint8_t network_index, const char *password,
                          size_t password_length) {

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import struct
 import sys
 import time
@@ -89,6 +90,11 @@ def parse_args() -> argparse.Namespace:
         help="Persistently switch the ESP32 to SWD programmer mode (shared pins remain high-Z while idle)",
     )
     mode.add_argument(
+        "--esp32-diagnostics",
+        action="store_true",
+        help="Report runtime UART, PING, Wi-Fi, and scan counters",
+    )
+    mode.add_argument(
         "--values",
         action="store_true",
         help="Read saved internal-flash values only; the target pauses briefly and then resumes",
@@ -122,18 +128,22 @@ def parse_args() -> argparse.Namespace:
 
 def open_esp32(port: str, baud: int) -> serial.Serial:
     device = serial.Serial(
-        port,
-        baud,
+        port=None,
+        baudrate=baud,
         timeout=0.25,
         write_timeout=30,
         xonxoff=False,
         rtscts=False,
         dsrdtr=False,
     )
-    # Opening a DevKit COM port can reset the board through DTR/RTS. Wait for
-    # the new firmware, then discard the ROM boot banner before sending a command.
+    # Establish inactive control-line levels before opening the port. This
+    # avoids erasing runtime diagnostic counters through an avoidable EN/BOOT
+    # pulse on CP210x/CH340 boards; some boards may still reset on open.
     device.dtr = False
     device.rts = False
+    device.port = port
+    device.open()
+    # If the board did reset, allow setup() to complete and discard its ROM banner.
     time.sleep(1.25)
     device.reset_input_buffer()
     device.reset_output_buffer()
@@ -144,14 +154,26 @@ def normalize_protocol_line(line: str) -> str:
     """Discard replacement-byte reset noise glued before a terminal reply.
 
     The ESP32 can emit 0xFF bytes while resetting the target. On Windows those
-    decode as U+FFFD; if they arrive in the same serial line as ``DONE``, an
-    otherwise successful flash must still be accepted as complete.
+    decode as U+FFFD; if they arrive in the same serial line as a valid reply,
+    an otherwise successful command must still be accepted. Only a prefix made
+    entirely of replacement characters is removed so real protocol errors are
+    never hidden.
     """
     for reply in ("RESTORE_READY", "READY", "DONE"):
         if line.endswith(reply):
             prefix = line[:-len(reply)]
             if prefix and all(character == "\ufffd" for character in prefix):
                 return reply
+
+    # These replies carry trailing fields, so find the start marker instead of
+    # comparing the complete line. ROM/reset noise has been observed immediately
+    # before MODE after an ESP32 firmware upload.
+    for marker in ("MODE ", "IDR ", "DIAG BEGIN"):
+        marker_index = line.find(marker)
+        if marker_index > 0:
+            prefix = line[:marker_index]
+            if all(character == "\ufffd" for character in prefix):
+                return line[marker_index:]
     return line
 
 
@@ -175,11 +197,23 @@ def read_exact(device: serial.Serial, size: int, deadline: float) -> bytes:
     return bytes(data)
 
 
+def swd_connect_error() -> RuntimeError:
+    return RuntimeError(
+        "ESP32 could not attach to the N32 SWD port. Enable ESP32 programmer mode, "
+        "then hold the vape button while actually resetting or power-cycling the N32. "
+        "Keep it held through Test SWD connection and the connection/erase step. Holding "
+        "the button after the vape has already booted does not enter SWD recovery. Do not "
+        "disable the safety backup as a workaround; flashing needs the same SWD connection."
+    )
+
+
 def probe(device: serial.Serial) -> int:
     device.write(b"I")
     device.flush()
     response = read_line(device, time.monotonic() + 10)
     print(response)
+    if response == "ERR CONNECT":
+        raise swd_connect_error()
     if not response.startswith("IDR "):
         raise RuntimeError(f"ESP32 SWD probe failed: {response}")
     return 0
@@ -194,6 +228,62 @@ def esp32_mode(device: serial.Serial, command: bytes, expected: str | None = Non
         raise RuntimeError(f"ESP32 mode command failed: {response}")
     if expected is not None and not response.startswith(f"MODE {expected} "):
         raise RuntimeError(f"ESP32 did not enter {expected.lower()} mode: {response}")
+    return 0
+
+
+def esp32_diagnostics(device: serial.Serial) -> int:
+    # Opening a DevKit port may reset it. Allow at least one periodic N32 PING
+    # to arrive so zero counters are meaningful rather than just premature.
+    time.sleep(2.25)
+    device.reset_input_buffer()
+    device.write(b"D")
+    device.flush()
+    deadline = time.monotonic() + 8
+    response = read_line(device, deadline)
+    if response != "DIAG BEGIN":
+        raise RuntimeError(f"ESP32 diagnostics did not start: {response}")
+    print(response)
+    lines = [response]
+    while True:
+        response = read_line(device, deadline)
+        print(response)
+        lines.append(response)
+        if response == "DIAG END":
+            break
+        if response.startswith("ERR"):
+            raise RuntimeError(f"ESP32 diagnostics failed: {response}")
+
+    report = "\n".join(lines)
+
+    def field(name: str) -> int | None:
+        match = re.search(rf"\b{re.escape(name)}=(-?\d+)", report)
+        return int(match.group(1)) if match else None
+
+    if "MODE=PROGRAMMER" in report:
+        print("INTERPRETATION: ESP32 is not in Wi-Fi runtime mode.")
+        return 0
+    rx_bytes = field("RX_BYTES")
+    pings = field("PINGS")
+    tx_attached = field("TX_ATTACHED")
+    tx_failed = field("TX_ATTACH_FAILED")
+    scan_starts = field("SCAN_STARTS")
+    scan_done = field("SCAN_DONE")
+    last_scan = field("LAST_SCAN")
+    aps = field("APS")
+    if rx_bytes == 0:
+        print("INTERPRETATION: no bytes arrived from the N32; check runtime mode, saved pin map, wiring, and N32 reset state.")
+    elif pings == 0:
+        print("INTERPRETATION: UART bytes arrived but no valid PING was decoded; check baud, noise, and the saved CC pin map.")
+    elif tx_failed == 1 or tx_attached == 0:
+        print("INTERPRETATION: N32-to-ESP32 works, but the ESP32 could not attach its reply pin.")
+    elif scan_starts == 0:
+        print("INTERPRETATION: PING works, but no SCAN command has reached the ESP32 since its last reset.")
+    elif scan_done is not None and scan_starts is not None and scan_done < scan_starts:
+        print("INTERPRETATION: the ESP32 Wi-Fi scan is still active or did not complete.")
+    elif last_scan is not None and last_scan < 0:
+        print(f"INTERPRETATION: the ESP32 Wi-Fi API reported scan failure code {last_scan}.")
+    else:
+        print(f"INTERPRETATION: UART and scan completed; ESP32 retained {aps or 0} network result(s).")
     return 0
 
 
@@ -333,6 +423,8 @@ def flash(device: serial.Serial, image_path: Path) -> int:
         print(response)
         if response == "DONE":
             return 0
+        if response == "ERR CONNECT":
+            raise swd_connect_error()
         if response.startswith("ERR") or response.startswith("VERIFY_FAIL"):
             raise RuntimeError(f"ESP32 fast flash failed: {response}")
 
@@ -344,6 +436,8 @@ def backup(device: serial.Serial, output_dir: Path) -> int:
     device.write(b"K")
     device.flush()
     header = read_line(device, time.monotonic() + 15)
+    if header == "ERR CONNECT":
+        raise swd_connect_error()
     fields = header.split()
     if len(fields) != 4 or fields[0] != "BACKUP":
         raise RuntimeError(f"ESP32 did not start a backup: {header}")
@@ -449,6 +543,8 @@ def main() -> int:
             return esp32_mode(device, b"W", "RUNTIME")
         if args.esp32_programmer:
             return esp32_mode(device, b"P", "PROGRAMMER")
+        if args.esp32_diagnostics:
+            return esp32_diagnostics(device)
         if args.probe:
             return probe(device)
         if args.values:

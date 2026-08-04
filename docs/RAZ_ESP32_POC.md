@@ -186,6 +186,14 @@ RAZ Manager's **Update ESP32 firmware...** button builds and uploads this same
 combined image. `firmware/esp32-poc` remains as a standalone reference build;
 it is not needed for the recommended procedure.
 
+The Manager's normal **App** selector also contains **RAZ Browser**. Flashing
+that entry builds `raz_esp32_poc.bin` fresh, can create the usual pre-flash
+backup, and then programs it like the other standalone vape apps. Coil remapping
+and the optional SWD screen-stream wrapper are disabled for this entry because
+the browser firmware already owns the display and permanently disables the
+identified heater output. Select **Enable Wi-Fi runtime** only after the flash
+and recovery checks complete.
+
 ## Staged flashing and test procedure
 
 Keep the integrated ESP32 in programmer mode for the first three N32 stages.
@@ -215,6 +223,14 @@ Keep the integrated ESP32 in programmer mode for the first three N32 stages.
    On a normal reset, SWD must work during the first approximately two seconds.
    Holding the button from reset must retain SWD indefinitely.
 
+   When replacing the current RAZ Browser image, select **SWD Recovery** on the
+   vape, long-press once to open it, then long-press again to confirm. The N32
+   sends `SWDRECOVERY`; the ESP32 replies `SWD,READY`, persists programmer mode,
+   flushes/stops UART, and releases both CC pins before the N32 selects AF0.
+   Wait for `SWD ACTIVE`, then confirm **Test SWD connection** reports an `IDR`.
+   Browser builds from before this handshake still require a real reset or
+   power cycle with the vape button held continuously.
+
 4. **ESP32 runtime:** in RAZ Manager click **Enable Wi-Fi runtime**, or use:
 
    ```powershell
@@ -238,7 +254,12 @@ Keep the integrated ESP32 in programmer mode for the first three N32 stages.
    next key, double press types/activates the selected key, `PG` changes between
    upper/lower/symbol pages, `SP` inserts a space, `BK` deletes, `OK` submits,
    and `X` cancels. A 1.5-second hold also submits. Verify the status screen shows
-   the SSID and DHCP address after connection.
+    the SSID and DHCP address after connection.
+   If scanning fails, use **Link diagnostics** in RAZ Manager. `RX_BYTES=0`
+   points to mode/map/wiring or an N32 still in recovery; bytes without `PINGS`
+   point to invalid UART framing/noise; `PINGS` without `SCAN_STARTS` means the
+   basic link works but the scan command did not arrive; a negative `LAST_SCAN`
+   is an ESP32 Wi-Fi API failure code.
 9. Open **Browser**, then choose **Hackaday.com**, **Google.com**, or **Custom
     address**. Custom addresses use the same keyboard and begin with `https://`.
     Confirm that a page produces a title plus styled text lines. On the page,
@@ -254,17 +275,24 @@ Keep the integrated ESP32 in programmer mode for the first three N32 stages.
 
 ## Recovery and factory restore
 
-1. In RAZ Manager click **Enable SWD programmer**, or run:
+1. For a current Browser build, use the vape's **SWD Recovery** menu item and
+   wait for `SWD ACTIVE`. This automatically places the current ESP32 firmware
+   in persistent programmer mode. If it reports `ESP32 NO ACK`, manually place
+   the ESP32 in programmer mode or physically disconnect it before long-pressing
+   the separately labeled force action. Never force while an ESP32 UART output
+   may still be driving a shared line.
+2. For an older Browser build, in RAZ Manager click **Enable SWD programmer**,
+   or run:
 
    ```powershell
    python .\tools\fast_flash.py --port COM7 --esp32-programmer
    ```
 
    Confirm `MODE PROGRAMMER ... IDLE=HIGH-Z`.
-2. Hold the vape button before reset/power-up and keep holding it. The full POC
+3. Hold the vape button before reset/power-up and keep holding it. The older POC
    never leaves SWD in this mode. Without the button, connect-under-reset must
    complete inside the approximately two-second window.
-3. Probe and restore the verified full backup:
+4. Probe and restore the verified full backup:
 
 ```powershell
 python .\tools\fast_flash.py --port COM7 --probe
@@ -291,6 +319,7 @@ GET,HACKADAY
 GET,GOOGLE
 GETHEX,<hex-url>
 SCROLL,<1|-1>
+SWDRECOVERY
 ```
 
 ESP32→N32:
@@ -298,6 +327,7 @@ ESP32→N32:
 ```text
 ESP32,READY
 PONG
+SCAN,STARTED
 BEGIN,<count>
 AP,<rssi>,<OPEN|SECURE>,<sanitized-ssid>
 END
@@ -308,6 +338,7 @@ BROWSER,LOADING
 VIEW,<top>,<total>,<count>,<truncated>,<title>
 TXT,<P|H|L|A|M>,<text>
 VIEWEND
+SWD,READY
 ERROR,<SCAN|WIFI|BROWSER|COMMAND>,<reason>
 ```
 
@@ -317,6 +348,22 @@ timeouts. Passwords and custom URLs are hex encoded, length checked, and cleared
 from N32/ESP32 command buffers after use. The ESP32 performs an asynchronous scan
 and copies the strongest 20 results into fixed storage; the Arduino Wi-Fi/TLS
 stacks themselves use dynamic memory internally.
+
+The N32 paints the scan screen before transmitting `SCAN`, so the blocking LCD
+driver cannot discard the immediate acknowledgment. The ESP32 replies with
+`SCAN,STARTED`; absence of that reply times out in five seconds, while an
+acknowledged scan receives fifteen seconds to finish. Main-menu, site-picker,
+and same-page keyboard cursor movement repaint only the old and new selections
+instead of clearing the entire LCD.
+
+`SWDRECOVERY` is a two-sided break-before-make handoff. The ESP32 transmits
+`SWD,READY`, drains its UART, persists programmer mode, and makes CC1/CC2 inputs.
+Only after parsing that acknowledgement does the N32 disable USART1 and restore
+PA13/PA14 AF0 with the documented SWDIO pull-up and SWCLK pull-down. The final
+screen is painted first, the heater remains forced off, and the N32 stays in an
+indefinite watchdog-fed service loop. A no-ack force path is intentionally a
+separate long press and is safe only with the adapter disconnected or already
+confirmed high-impedance.
 
 ## Text-browser limits
 

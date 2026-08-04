@@ -13,6 +13,19 @@
 #define UI_BAD      COL_RGB(242, 91, 91)
 #define UI_ACCENT   COL_RGB(89, 203, 232)
 
+static bool g_menu_cache_valid;
+static uint8_t g_menu_cached_first;
+static uint8_t g_menu_cached_selected;
+static bool g_sites_cache_valid;
+static uint8_t g_sites_cached_selected;
+static bool g_scan_cache_valid;
+static uint8_t g_scan_cached_active;
+static uint8_t g_scan_cached_acknowledged;
+static bool g_keyboard_cache_valid;
+static uint8_t g_keyboard_cached_page;
+static uint8_t g_keyboard_cached_key;
+static uint8_t g_keyboard_cached_length;
+
 #define GLYPH(a,b,c,d,e) \
     ((uint16_t)(((a) << 12) | ((b) << 9) | ((c) << 6) | ((d) << 3) | (e)))
 
@@ -95,9 +108,28 @@ static void draw_text(uint16_t x, uint16_t y, const char *text,
 
 static void draw_header(const char *title)
 {
+    /* A full-screen transition invalidates every incremental selection cache. */
+    g_menu_cache_valid = false;
+    g_sites_cache_valid = false;
+    g_scan_cache_valid = false;
+    g_keyboard_cache_valid = false;
     display_fill(UI_BG);
     display_fill_rect(0u, 0u, LCD_WIDTH, 20u, UI_PANEL);
     draw_text(6u, 5u, title, UI_ACCENT, 2u, 15u);
+}
+
+static void draw_menu_row(uint8_t first, uint8_t row, uint8_t selected)
+{
+    static const char *const items[9] = {
+        "ESP32 STATUS", "WI-FI SCAN", "VIEW NETWORKS", "CONNECT WI-FI",
+        "BROWSER", "RESCAN", "DISCONNECT", "SWD RECOVERY", "ABOUT"
+    };
+    const uint8_t item = (uint8_t)(first + row);
+    const uint16_t y = (uint16_t)(27u + (uint16_t)row * 25u);
+    const bool active = item == selected;
+    display_fill_rect(4u, y, 120u, 20u, active ? UI_SELECT : UI_PANEL);
+    draw_text(10u, (uint16_t)(y + 5u), items[item],
+              active ? UI_TEXT : UI_MUTED, 2u, 14u);
 }
 
 static void format_u8(uint8_t value, char *out)
@@ -154,24 +186,27 @@ void display_ui_init(void)
 
 void display_ui_menu(uint8_t selected)
 {
-    static const char *const items[8] = {
-        "ESP32 STATUS", "WI-FI SCAN", "VIEW NETWORKS", "CONNECT WI-FI",
-        "BROWSER", "RESCAN", "DISCONNECT", "ABOUT"
-    };
-    uint8_t first = 0u;
+    const uint8_t first = selected < 5u ? 0u : 4u;
     uint8_t index;
 
-    if (selected >= 5u) first = (uint8_t)(selected - 4u);
+    if (g_menu_cache_valid && (first == g_menu_cached_first)) {
+        if (selected != g_menu_cached_selected) {
+            draw_menu_row(first,
+                          (uint8_t)(g_menu_cached_selected - first), selected);
+            draw_menu_row(first, (uint8_t)(selected - first), selected);
+            g_menu_cached_selected = selected;
+        }
+        return;
+    }
+
     draw_header("RAZ LINK");
     for (index = 0u; index < 5u; index++) {
-        const uint8_t item = (uint8_t)(first + index);
-        const uint16_t y = (uint16_t)(27u + (uint16_t)index * 25u);
-        const bool active = item == selected;
-        display_fill_rect(4u, y, 120u, 20u, active ? UI_SELECT : UI_PANEL);
-        draw_text(10u, (uint16_t)(y + 5u), items[item],
-                  active ? UI_TEXT : UI_MUTED, 2u, 14u);
+        draw_menu_row(first, index, selected);
     }
     draw_text(6u, 153u, "TAP NEXT  HOLD 1.5S SELECT", UI_MUTED, 1u, 29u);
+    g_menu_cached_first = first;
+    g_menu_cached_selected = selected;
+    g_menu_cache_valid = true;
 }
 
 void display_ui_status(uint8_t online, protocol_wifi_state_t wifi_state,
@@ -192,17 +227,39 @@ void display_ui_status(uint8_t online, protocol_wifi_state_t wifi_state,
     draw_text(8u, 148u, "DOUBLE PRESS BACK", UI_MUTED, 1u, 28u);
 }
 
-void display_ui_scan(uint8_t active, const char *error)
+static void draw_scan_active(uint8_t acknowledged)
 {
+    draw_text(acknowledged ? 20u : 8u, 52u,
+              acknowledged ? "SCANNING" : "CONTACTING ESP32",
+              UI_ACCENT, acknowledged ? 3u : 2u,
+              acknowledged ? 9u : 15u);
+    draw_text(12u, 91u,
+              acknowledged ? "ESP32 RADIO ACTIVE" : "WAITING FOR UART REPLY",
+              UI_MUTED, 1u, 25u);
+}
+
+void display_ui_scan(uint8_t active, uint8_t acknowledged, const char *error)
+{
+    if (g_scan_cache_valid && (active != 0u) && (g_scan_cached_active != 0u)) {
+        if (acknowledged != g_scan_cached_acknowledged) {
+            display_fill_rect(4u, 45u, 120u, 63u, UI_BG);
+            draw_scan_active(acknowledged);
+            g_scan_cached_acknowledged = acknowledged;
+        }
+        return;
+    }
+
     draw_header("WI-FI SCAN");
     if (active) {
-        draw_text(20u, 57u, "SCANNING", UI_ACCENT, 3u, 9u);
-        draw_text(12u, 95u, "NO CONNECTION MADE", UI_MUTED, 1u, 25u);
+        draw_scan_active(acknowledged);
     } else {
         draw_text(24u, 52u, "SCAN FAILED", UI_BAD, 2u, 11u);
         draw_text(8u, 83u, error, UI_TEXT, 1u, 28u);
     }
     draw_text(8u, 148u, "DOUBLE PRESS BACK", UI_MUTED, 1u, 28u);
+    g_scan_cached_active = active;
+    g_scan_cached_acknowledged = acknowledged;
+    g_scan_cache_valid = true;
 }
 
 void display_ui_network(const protocol_ap_t *ap, uint8_t index, uint8_t count)
@@ -265,6 +322,21 @@ void display_ui_sites(uint8_t selected)
         "HACKADAY.COM", "GOOGLE.COM", "CUSTOM ADDRESS"
     };
     uint8_t index;
+
+    if (g_sites_cache_valid) {
+        if (selected != g_sites_cached_selected) {
+            uint16_t y = (uint16_t)(36u + (uint16_t)g_sites_cached_selected * 32u);
+            display_fill_rect(5u, y, 118u, 24u, UI_PANEL);
+            draw_text(10u, (uint16_t)(y + 7u), sites[g_sites_cached_selected],
+                      UI_MUTED, 2u, 14u);
+            y = (uint16_t)(36u + (uint16_t)selected * 32u);
+            display_fill_rect(5u, y, 118u, 24u, UI_SELECT);
+            draw_text(10u, (uint16_t)(y + 7u), sites[selected],
+                      UI_TEXT, 2u, 14u);
+            g_sites_cached_selected = selected;
+        }
+        return;
+    }
     draw_header("BROWSER");
     for (index = 0u; index < 3u; index++) {
         const uint16_t y = (uint16_t)(36u + (uint16_t)index * 32u);
@@ -274,25 +346,62 @@ void display_ui_sites(uint8_t selected)
                   active ? UI_TEXT : UI_MUTED, 2u, 14u);
     }
     draw_text(7u, 148u, "TAP NEXT HOLD OPEN DBL BACK", UI_MUTED, 1u, 29u);
+    g_sites_cached_selected = selected;
+    g_sites_cache_valid = true;
 }
 
-void display_ui_keyboard(void)
+static void draw_keyboard_preview(void)
 {
     char preview[30];
-    char key[3];
-    char page[8];
     const char *value = text_keyboard_value();
     const uint8_t length = text_keyboard_length();
-    uint8_t start = (length > 29u) ? (uint8_t)(length - 29u) : 0u;
+    const uint8_t start = (length > 29u) ? (uint8_t)(length - 29u) : 0u;
     uint8_t index;
 
-    draw_header(text_keyboard_label());
     for (index = 0u; index < (uint8_t)(length - start); index++) {
         preview[index] = text_keyboard_masked() ? '*' : value[start + index];
     }
     preview[index] = '\0';
     display_fill_rect(3u, 23u, 122u, 18u, UI_PANEL);
     draw_text(6u, 29u, preview, UI_TEXT, 1u, 29u);
+}
+
+static void draw_keyboard_key(uint8_t index, bool selected)
+{
+    char key[3];
+    const uint8_t column = (uint8_t)(index % 6u);
+    const uint8_t row = (uint8_t)(index / 6u);
+    const uint16_t x = (uint16_t)(3u + (uint16_t)column * 21u);
+    const uint16_t y = (uint16_t)(57u + (uint16_t)row * 14u);
+    text_keyboard_key_text(index, key);
+    display_fill_rect(x, y, 19u, 12u, selected ? UI_SELECT : UI_PANEL);
+    draw_text((uint16_t)(x + 5u), (uint16_t)(y + 3u), key,
+              selected ? UI_TEXT : UI_MUTED, 1u, 2u);
+}
+
+void display_ui_keyboard(void)
+{
+    char page[8];
+    const uint8_t current_page = text_keyboard_page();
+    const uint8_t current_key = text_keyboard_key_index();
+    const uint8_t current_length = text_keyboard_length();
+    uint8_t index;
+
+    if (g_keyboard_cache_valid && (current_page == g_keyboard_cached_page)) {
+        if (current_key != g_keyboard_cached_key) {
+            draw_keyboard_key(g_keyboard_cached_key, false);
+            draw_keyboard_key(current_key, true);
+            g_keyboard_cached_key = current_key;
+        }
+        if (current_length != g_keyboard_cached_length) {
+            draw_keyboard_preview();
+            g_keyboard_cached_length = current_length;
+        }
+        return;
+    }
+
+    draw_header(text_keyboard_label());
+    draw_keyboard_preview();
     if (text_keyboard_page() == 0u) {
         page[0] = 'U'; page[1] = 'P'; page[2] = '\0';
     } else if (text_keyboard_page() == 1u) {
@@ -306,17 +415,13 @@ void display_ui_keyboard(void)
     draw_text(25u, 46u, "TAP MOVE DOUBLE TYPE", UI_MUTED, 1u, 24u);
 
     for (index = 0u; index < text_keyboard_key_count(); index++) {
-        const uint8_t column = (uint8_t)(index % 6u);
-        const uint8_t row = (uint8_t)(index / 6u);
-        const uint16_t x = (uint16_t)(3u + (uint16_t)column * 21u);
-        const uint16_t y = (uint16_t)(57u + (uint16_t)row * 14u);
-        const bool selected = index == text_keyboard_key_index();
-        text_keyboard_key_text(index, key);
-        display_fill_rect(x, y, 19u, 12u, selected ? UI_SELECT : UI_PANEL);
-        draw_text((uint16_t)(x + 5u), (uint16_t)(y + 3u), key,
-                  selected ? UI_TEXT : UI_MUTED, 1u, 2u);
+        draw_keyboard_key(index, index == current_key);
     }
     draw_text(5u, 148u, "HOLD 1.5S DONE PG SP BK OK X", UI_MUTED, 1u, 29u);
+    g_keyboard_cached_page = current_page;
+    g_keyboard_cached_key = current_key;
+    g_keyboard_cached_length = current_length;
+    g_keyboard_cache_valid = true;
 }
 
 void display_ui_browser_loading(const char *message)
@@ -359,6 +464,40 @@ void display_ui_message(const char *title, const char *line1, const char *line2)
     draw_text(7u, 51u, line1, UI_TEXT, 2u, 15u);
     draw_text(7u, 87u, line2, UI_MUTED, 1u, 29u);
     draw_text(7u, 148u, "DOUBLE PRESS BACK", UI_MUTED, 1u, 28u);
+}
+
+void display_ui_swd_recovery_confirm(void)
+{
+    draw_header("SWD RECOVERY");
+    draw_text(8u, 37u, "RESTORE CC DEBUG PINS", UI_TEXT, 1u, 26u);
+    draw_text(8u, 62u, "ESP32 WILL GO HIGH-Z", UI_ACCENT, 1u, 24u);
+    draw_text(8u, 94u, "HOLD 1.5S TO CONFIRM", UI_GOOD, 1u, 26u);
+    draw_text(8u, 148u, "DOUBLE PRESS BACK", UI_MUTED, 1u, 28u);
+}
+
+void display_ui_swd_recovery_wait(uint8_t failed)
+{
+    draw_header("SWD RECOVERY");
+    if (failed == 0u) {
+        draw_text(8u, 48u, "CONTACTING ESP32", UI_ACCENT, 2u, 15u);
+        draw_text(8u, 83u, "WAIT FOR SAFE HANDOFF", UI_TEXT, 1u, 26u);
+        draw_text(8u, 148u, "DOUBLE PRESS CANCEL", UI_MUTED, 1u, 28u);
+    } else {
+        draw_text(8u, 35u, "ESP32 NO ACK", UI_BAD, 2u, 15u);
+        draw_text(8u, 68u, "SET ESP PROGRAMMER", UI_TEXT, 1u, 24u);
+        draw_text(8u, 85u, "OR UNPLUG ADAPTER", UI_TEXT, 1u, 24u);
+        draw_text(8u, 113u, "HOLD TO FORCE SWD", UI_GOOD, 1u, 24u);
+        draw_text(8u, 148u, "DOUBLE PRESS BACK", UI_MUTED, 1u, 28u);
+    }
+}
+
+void display_ui_swd_active(void)
+{
+    draw_header("SWD RECOVERY");
+    draw_text(12u, 44u, "SWD ACTIVE", UI_GOOD, 3u, 10u);
+    draw_text(8u, 88u, "UART DISABLED", UI_TEXT, 2u, 13u);
+    draw_text(8u, 119u, "HEATER DISABLED", UI_ACCENT, 1u, 20u);
+    draw_text(8u, 148u, "FLASH WITH RAZ MANAGER", UI_MUTED, 1u, 28u);
 }
 
 void display_ui_about(void)

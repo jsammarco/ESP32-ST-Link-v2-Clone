@@ -1202,6 +1202,10 @@ bool handle_mode_command(uint8_t command) {
     raz_print_mode();
     return true;
   }
+  if (command == 'D') {
+    raz_print_runtime_diagnostics();
+    return true;
+  }
   return false;
 }
 
@@ -1210,7 +1214,7 @@ void handle_command(uint8_t command) {
     return;
   }
   if (command == 'Y') {
-    Serial.println("RAZ_ESP32 4 STREAM_CMD2 DUAL_MODE WEB_TEXT");
+    Serial.println("RAZ_ESP32 6 STREAM_CMD2 DUAL_MODE WEB_TEXT SCAN_ACK DIAG SWD_HANDOFF");
     return;
   }
   if (command == 'I') {

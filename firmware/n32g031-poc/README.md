@@ -18,7 +18,9 @@ locations. Outputs are written only under `build\`.
 
 The minimal image never changes PA13/PA14 from SWD. The full image waits two
 seconds, honors the boot-button recovery hold, and then selects USART1 AF4:
-PA14 is TX and PA13 is RX.
+PA14 is TX and PA13 is RX. Its guarded **SWD Recovery** menu item coordinates
+with the ESP32, restores PA13/PA14 to AF0, disables USART, and remains in a
+heater-disabled SWD service loop until the next flash/reset.
 
 ## One-button browser controls
 
@@ -29,6 +31,10 @@ PA14 is TX and PA13 is RX.
   and cancel.
 - Web page: tap scrolls down one line, double press scrolls up one line, and a
   1.5-second hold returns to the main menu.
+- SWD Recovery: hold once to select, then hold again to confirm. On
+  `SWD,READY`, the screen shows `SWD ACTIVE` and the UART pins become SWD pins.
+  If the ESP32 does not acknowledge, put it in programmer mode or disconnect
+  it before using the separately labeled force action.
 
 The N32 keeps only ten rendered lines. HTML fetch, CSS processing, TLS, and the
 160-line document live on the ESP32. Passwords and URLs use bounded hex-encoded

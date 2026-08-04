@@ -19,8 +19,8 @@ $ProtocolSource = Join-Path $ProjectRoot 'src\protocol.c'
 $MockInclude = Join-Path $TestRoot 'mocks'
 $ProjectInclude = Join-Path $ProjectRoot 'include'
 
-$Command = 'call "{0}" -arch=x64 -host_arch=x64 >nul && cl /nologo /std:c11 /W4 /WX /I"{1}" /I"{2}" "{3}" "{4}" /Fe:"{5}" && "{5}"' -f `
-    $DevCmd, $MockInclude, $ProjectInclude, $TestSource, $ProtocolSource, $Exe
+$Command = 'call "{0}" -arch=x64 -host_arch=x64 >nul && cl /nologo /std:c11 /W4 /WX /I"{1}" /I"{2}" /Fo:"{5}\\" "{3}" "{4}" /Fe:"{6}" && "{6}"' -f `
+    $DevCmd, $MockInclude, $ProjectInclude, $TestSource, $ProtocolSource, $BuildRoot, $Exe
 cmd.exe /d /s /c $Command
 if ($LASTEXITCODE -ne 0) {
     throw "Protocol host tests failed with exit code $LASTEXITCODE."
@@ -29,8 +29,8 @@ if ($LASTEXITCODE -ne 0) {
 $KeyboardExe = Join-Path $BuildRoot 'keyboard_host_test.exe'
 $KeyboardTest = Join-Path $TestRoot 'keyboard_host_test.c'
 $KeyboardSource = Join-Path $ProjectRoot 'src\text_keyboard.c'
-$KeyboardCommand = 'call "{0}" -arch=x64 -host_arch=x64 >nul && cl /nologo /std:c11 /W4 /WX /I"{1}" "{2}" "{3}" /Fe:"{4}" && "{4}"' -f `
-    $DevCmd, $ProjectInclude, $KeyboardTest, $KeyboardSource, $KeyboardExe
+$KeyboardCommand = 'call "{0}" -arch=x64 -host_arch=x64 >nul && cl /nologo /std:c11 /W4 /WX /I"{1}" /Fo:"{4}\\" "{2}" "{3}" /Fe:"{5}" && "{5}"' -f `
+    $DevCmd, $ProjectInclude, $KeyboardTest, $KeyboardSource, $BuildRoot, $KeyboardExe
 cmd.exe /d /s /c $KeyboardCommand
 if ($LASTEXITCODE -ne 0) {
     throw "Keyboard host tests failed with exit code $LASTEXITCODE."

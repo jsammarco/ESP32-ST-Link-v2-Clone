@@ -14,5 +14,6 @@ void raz_runtime_stop(bool persist);
 void raz_runtime_poll();
 bool raz_runtime_active();
 void raz_print_mode();
+void raz_print_runtime_diagnostics();
 
 #endif

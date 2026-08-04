@@ -9,21 +9,26 @@
 #define RX_LINE_BYTES          128u
 #define ERROR_BYTES             40u
 #define ONLINE_TIMEOUT_MS     5000u
+#define SCAN_ACK_TIMEOUT_MS   5000u
 #define SCAN_TIMEOUT_MS      15000u
 #define WIFI_TIMEOUT_MS      25000u
 #define BROWSER_TIMEOUT_MS   30000u
+#define SWD_RECOVERY_TIMEOUT_MS 3000u
 
 static char g_line[RX_LINE_BYTES];
 static uint8_t g_line_length;
 static bool g_discard_line;
 static bool g_ready;
 static bool g_scan_active;
+static bool g_scan_acknowledged;
 static bool g_receiving_aps;
 static bool g_wifi_waiting;
 static bool g_browser_loading;
 static bool g_browser_ready;
 static bool g_receiving_view;
 static bool g_document_truncated;
+static bool g_swd_recovery_waiting;
+static bool g_swd_recovery_ready;
 static uint8_t g_declared_count;
 static uint8_t g_received_count;
 static uint8_t g_ap_count;
@@ -159,6 +164,7 @@ static void bump_revision(void)
 static void fail_scan(const char *reason)
 {
     g_scan_active = false;
+    g_scan_acknowledged = false;
     g_receiving_aps = false;
     set_error(reason);
     bump_revision();
@@ -371,6 +377,15 @@ static void parse_line(char *line)
         if (!was_online) bump_revision();
         return;
     }
+    if (text_equal(line, "SWD,READY")) {
+        if (g_swd_recovery_waiting) {
+            g_swd_recovery_waiting = false;
+            g_swd_recovery_ready = true;
+            clear_error();
+            bump_revision();
+        }
+        return;
+    }
     if (text_starts_with(line, "BEGIN,")) {
         uint8_t count;
         if (!g_scan_active || !parse_u8(line + 6, &count) ||
@@ -381,7 +396,15 @@ static void parse_line(char *line)
         g_declared_count = count;
         g_received_count = 0u;
         g_receiving_aps = true;
+        g_scan_acknowledged = true;
         clear_error();
+        return;
+    }
+    if (text_equal(line, "SCAN,STARTED")) {
+        if (!g_scan_active) return;
+        g_scan_acknowledged = true;
+        clear_error();
+        bump_revision();
         return;
     }
     if (text_starts_with(line, "AP,")) {
@@ -395,6 +418,7 @@ static void parse_line(char *line)
         }
         g_ap_count = g_received_count;
         g_scan_active = false;
+        g_scan_acknowledged = false;
         g_receiving_aps = false;
         clear_error();
         bump_revision();
@@ -489,12 +513,15 @@ void protocol_init(void)
     g_discard_line = false;
     g_ready = false;
     g_scan_active = false;
+    g_scan_acknowledged = false;
     g_receiving_aps = false;
     g_wifi_waiting = false;
     g_browser_loading = false;
     g_browser_ready = false;
     g_receiving_view = false;
     g_document_truncated = false;
+    g_swd_recovery_waiting = false;
+    g_swd_recovery_ready = false;
     g_declared_count = 0u;
     g_received_count = 0u;
     g_ap_count = 0u;
@@ -547,7 +574,16 @@ void protocol_send_ping(void)
 void protocol_check_timeouts(void)
 {
     const uint16_t elapsed = (uint16_t)(ms_now() - g_operation_started_ms);
-    if (g_scan_active && (elapsed >= SCAN_TIMEOUT_MS)) fail_scan("ESP32 TIMEOUT");
+    if (g_swd_recovery_waiting && (elapsed >= SWD_RECOVERY_TIMEOUT_MS)) {
+        g_swd_recovery_waiting = false;
+        set_error("ESP32 NO ACK");
+        bump_revision();
+    } else if (g_scan_active && !g_scan_acknowledged &&
+        (elapsed >= SCAN_ACK_TIMEOUT_MS)) {
+        fail_scan("NO ESP32 SCAN REPLY");
+    } else if (g_scan_active && (elapsed >= SCAN_TIMEOUT_MS)) {
+        fail_scan("SCAN DID NOT FINISH");
+    }
     else if (g_wifi_waiting && (elapsed >= WIFI_TIMEOUT_MS)) {
         g_wifi_waiting = false;
         g_wifi_state = PROTOCOL_WIFI_DISCONNECTED;
@@ -563,6 +599,7 @@ bool protocol_request_scan(void)
     if (g_scan_active) return false;
     clear_error();
     g_scan_active = true;
+    g_scan_acknowledged = false;
     g_receiving_aps = false;
     g_operation_started_ms = ms_now();
     bump_revision();
@@ -571,6 +608,7 @@ bool protocol_request_scan(void)
 }
 
 bool protocol_scan_active(void) { return g_scan_active; }
+bool protocol_scan_acknowledged(void) { return g_scan_acknowledged; }
 uint8_t protocol_ap_count(void) { return g_ap_count; }
 const protocol_ap_t *protocol_ap_at(uint8_t index)
 {
@@ -655,6 +693,27 @@ const protocol_web_line_t *protocol_view_line(uint8_t index)
 }
 const char *protocol_web_title(void) { return g_web_title; }
 bool protocol_document_truncated(void) { return g_document_truncated; }
+
+bool protocol_request_swd_recovery(void)
+{
+    if (g_swd_recovery_waiting) return false;
+    clear_error();
+    g_swd_recovery_ready = false;
+    g_swd_recovery_waiting = true;
+    g_operation_started_ms = ms_now();
+    bump_revision();
+    runtime_uart_write_line("SWDRECOVERY");
+    return true;
+}
+
+void protocol_cancel_swd_recovery(void)
+{
+    g_swd_recovery_waiting = false;
+    g_swd_recovery_ready = false;
+}
+
+bool protocol_swd_recovery_waiting(void) { return g_swd_recovery_waiting; }
+bool protocol_swd_recovery_ready(void) { return g_swd_recovery_ready; }
 
 bool protocol_esp32_online(void)
 {

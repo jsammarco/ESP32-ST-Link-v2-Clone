@@ -26,6 +26,11 @@ int8_t runtime_tx_pin = RAZ_CC2_GPIO;
 char command_line[COMMAND_BYTES];
 size_t command_length = 0U;
 bool discard_line = false;
+bool tx_attach_failed = false;
+uint32_t rx_byte_count = 0U;
+uint32_t rx_line_count = 0U;
+uint32_t tx_line_count = 0U;
+uint32_t ping_count = 0U;
 
 void set_runtime_pin_map(uint8_t map_index) {
   runtime_map = map_index == 1U ? 1U : 0U;
@@ -50,6 +55,7 @@ void write_line(const char *line) {
   }
   link_serial.print(line);
   link_serial.write(static_cast<uint8_t>('\n'));
+  ++tx_line_count;
 }
 
 void send_command_error(const char *reason) {
@@ -92,6 +98,7 @@ bool read_command_line(const char **line) {
     if (raw < 0) {
       break;
     }
+    ++rx_byte_count;
     const char value = static_cast<char>(raw);
     if (value == '\r') {
       continue;
@@ -101,6 +108,7 @@ bool read_command_line(const char **line) {
         command_line[command_length] = '\0';
         command_length = 0U;
         *line = command_line;
+        ++rx_line_count;
         return true;
       }
       if (discard_line && link_tx_enabled) {
@@ -127,6 +135,7 @@ bool enable_runtime_tx() {
   }
   if (!link_serial.setPins(-1, runtime_tx_pin)) {
     pinMode(runtime_tx_pin, INPUT);
+    tx_attach_failed = true;
     return false;
   }
   link_tx_enabled = true;
@@ -224,12 +233,23 @@ void handle_get_hex(const char *encoded_url) {
 
 void handle_runtime_command(const char *line) {
   if (strcmp(line, "PING") == 0) {
+    ++ping_count;
     if (enable_runtime_tx()) {
       if (!announced) {
         write_line("ESP32,READY");
         announced = true;
       }
       write_line("PONG");
+    }
+    return;
+  }
+  if (strcmp(line, "SWDRECOVERY") == 0) {
+    /* Complete the reply before ending UART, then persist programmer mode and
+     * release both CC pins. The N32 does not restore AF0 SWD until it receives
+     * this acknowledgement, preventing UART/SWD output contention. */
+    if (enable_runtime_tx()) {
+      write_line("SWD,READY");
+      raz_runtime_stop(true);
     }
     return;
   }
@@ -313,6 +333,11 @@ void raz_runtime_start(uint8_t map_index, bool persist) {
   discard_line = false;
   link_tx_enabled = false;
   announced = false;
+  tx_attach_failed = false;
+  rx_byte_count = 0U;
+  rx_line_count = 0U;
+  tx_line_count = 0U;
+  ping_count = 0U;
   raz_browser_init(write_line);
   runtime_active = true;
   raz_remember_swd_map(runtime_map);
@@ -323,7 +348,9 @@ void raz_runtime_start(uint8_t map_index, bool persist) {
 
 void raz_runtime_stop(bool persist) {
   if (runtime_active) {
-    raz_browser_shutdown();
+    /* Drain and release the shared electrical interface first. In particular,
+     * SWDRECOVERY has already sent SWD,READY; the N32 may act on that reply
+     * immediately, so Wi-Fi shutdown must not delay the high-Z transition. */
     if (link_tx_enabled) {
       link_serial.flush(true);
     }
@@ -333,6 +360,7 @@ void raz_runtime_stop(bool persist) {
     announced = false;
     clear_secret(command_line, sizeof(command_line));
     release_shared_pins();
+    raz_browser_shutdown();
   }
   if (persist) {
     persist_mode(false);
@@ -348,8 +376,13 @@ void raz_runtime_poll() {
   while (read_command_line(&line)) {
     handle_runtime_command(line);
     clear_secret(command_line, sizeof(command_line));
+    if (!runtime_active) {
+      break;
+    }
   }
-  raz_browser_poll();
+  if (runtime_active) {
+    raz_browser_poll();
+  }
 }
 
 bool raz_runtime_active() { return runtime_active; }
@@ -365,4 +398,29 @@ void raz_print_mode() {
     Serial.printf("MODE PROGRAMMER MAP%u IDLE=HIGH-Z\n",
                   static_cast<unsigned>(map_index + 1U));
   }
+}
+
+void raz_print_runtime_diagnostics() {
+  Serial.println("DIAG BEGIN");
+  if (!runtime_active) {
+    Serial.printf("DIAG MODE=PROGRAMMER MAP=%u IDLE=HIGH-Z\n",
+                  static_cast<unsigned>(raz_saved_swd_map() + 1U));
+    Serial.println("DIAG END");
+    return;
+  }
+  Serial.printf(
+      "DIAG MODE=RUNTIME MAP=%u RX=GPIO%d TX=GPIO%d TX_ATTACHED=%u "
+      "TX_ATTACH_FAILED=%u\n",
+      static_cast<unsigned>(runtime_map + 1U), static_cast<int>(runtime_rx_pin),
+      static_cast<int>(runtime_tx_pin), link_tx_enabled ? 1U : 0U,
+      tx_attach_failed ? 1U : 0U);
+  Serial.printf(
+      "DIAG UART RX_BYTES=%lu RX_LINES=%lu PINGS=%lu TX_LINES=%lu PARTIAL=%u\n",
+      static_cast<unsigned long>(rx_byte_count),
+      static_cast<unsigned long>(rx_line_count),
+      static_cast<unsigned long>(ping_count),
+      static_cast<unsigned long>(tx_line_count),
+      static_cast<unsigned>(command_length));
+  raz_browser_print_diagnostics();
+  Serial.println("DIAG END");
 }

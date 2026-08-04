@@ -149,10 +149,20 @@ static void test_status_and_timeouts(void)
 
     reset_fixture();
     CHECK(protocol_request_scan());
+    g_now = (uint16_t)(g_now + 5000u);
+    protocol_check_timeouts();
+    CHECK(!protocol_scan_active());
+    CHECK(strcmp(protocol_last_error(), "NO ESP32 SCAN REPLY") == 0);
+
+    reset_fixture();
+    CHECK(protocol_request_scan());
+    feed("SCAN,STARTED\n");
+    CHECK(protocol_scan_active());
+    CHECK(protocol_scan_acknowledged());
     g_now = (uint16_t)(g_now + 15000u);
     protocol_check_timeouts();
     CHECK(!protocol_scan_active());
-    CHECK(strcmp(protocol_last_error(), "ESP32 TIMEOUT") == 0);
+    CHECK(strcmp(protocol_last_error(), "SCAN DID NOT FINISH") == 0);
 }
 
 static void test_remote_error_and_zero_results(void)
@@ -231,6 +241,30 @@ static void test_browser_view_and_commands(void)
     CHECK(strcmp(g_tx, "GETHEX,68747470733A2F2F782E636F6D\n") == 0);
 }
 
+static void test_swd_recovery_handoff(void)
+{
+    reset_fixture();
+    CHECK(protocol_request_swd_recovery());
+    CHECK(protocol_swd_recovery_waiting());
+    CHECK(!protocol_swd_recovery_ready());
+    CHECK(strcmp(g_tx, "SWDRECOVERY\n") == 0);
+    feed("SWD,READY\n");
+    CHECK(!protocol_swd_recovery_waiting());
+    CHECK(protocol_swd_recovery_ready());
+    CHECK(strcmp(protocol_last_error(), "") == 0);
+
+    reset_fixture();
+    CHECK(protocol_request_swd_recovery());
+    g_now = (uint16_t)(g_now + 3000u);
+    protocol_check_timeouts();
+    CHECK(!protocol_swd_recovery_waiting());
+    CHECK(!protocol_swd_recovery_ready());
+    CHECK(strcmp(protocol_last_error(), "ESP32 NO ACK") == 0);
+    protocol_cancel_swd_recovery();
+    CHECK(!protocol_swd_recovery_waiting());
+    CHECK(!protocol_swd_recovery_ready());
+}
+
 int main(void)
 {
     test_valid_scan();
@@ -241,6 +275,7 @@ int main(void)
     test_remote_error_and_zero_results();
     test_wifi_connection_and_secret_encoding();
     test_browser_view_and_commands();
+    test_swd_recovery_handoff();
     if (g_failures != 0u) {
         printf("%u protocol test(s) failed\n", g_failures);
         return 1;

@@ -81,3 +81,30 @@ void runtime_uart_write_line(const char *text)
     runtime_uart_write(text);
     runtime_uart_write_byte((uint8_t)'\n');
 }
+
+void runtime_uart_restore_swd(void)
+{
+    const uint32_t rx_shift = (USART_RX_PIN - 8u) * 4u;
+    const uint32_t tx_shift = (USART_TX_PIN - 8u) * 4u;
+
+    /* Stop USART before changing either shared pin. Input mode creates a
+     * high-impedance break before AF0 is selected. The NationsTech AF table
+     * defines PA13/PA14 AF0 as SWDIO/SWCLK, with pull-up/pull-down reset
+     * states respectively. The debug port itself is never disabled. */
+    RAZ_USART1->CTRL1 = 0u;
+    RCC->APB2RSTR |= USART_RESET_BIT;
+    RCC->APB2RSTR &= ~USART_RESET_BIT;
+
+    GPIOA->MODER &= ~((3UL << (USART_RX_PIN * 2u)) |
+                      (3UL << (USART_TX_PIN * 2u)));
+    GPIOA->AFRH &= ~((0xFUL << rx_shift) | (0xFUL << tx_shift));
+    GPIOA->OTYPER &= ~((1UL << USART_RX_PIN) | (1UL << USART_TX_PIN));
+    GPIOA->OSPEEDR &= ~((3UL << (USART_RX_PIN * 2u)) |
+                        (3UL << (USART_TX_PIN * 2u)));
+    GPIOA->PUPDR &= ~((3UL << (USART_RX_PIN * 2u)) |
+                      (3UL << (USART_TX_PIN * 2u)));
+    GPIOA->PUPDR |=  (1UL << (USART_RX_PIN * 2u)) |
+                     (2UL << (USART_TX_PIN * 2u));
+    GPIOA->MODER |=  (GPIO_MODE_AF << (USART_RX_PIN * 2u)) |
+                     (GPIO_MODE_AF << (USART_TX_PIN * 2u));
+}
