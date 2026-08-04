@@ -11,6 +11,7 @@
 #include "app.h"
 #include "button.h"
 #include "display.h"
+#include "scene_compositor.h"
 #include "vape.h"
 
 #define RGB(r,g,b) ((uint16_t)((((uint16_t)(b) & 0xF8u) << 8) | \
@@ -107,7 +108,6 @@ static uint16_t g_anim_frame;
 static uint8_t g_state;
 static uint8_t g_on_ground;
 static uint8_t g_button_prev;
-static uint8_t g_render_skip;
 static uint8_t g_speed;
 static uint8_t g_score_flash;
 
@@ -136,7 +136,7 @@ static void clip_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color
     if (x + w > LCD_W) w = (int16_t)(LCD_W - x);
     if (y + h > LCD_H) h = (int16_t)(LCD_H - y);
     if (w > 0 && h > 0)
-        gc9107_fill_rect((uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, color);
+        scene_fill_rect(x, y, w, h, color);
 }
 
 #define GLYPH(a,b,c,d,e) ((uint16_t)(((a)<<12)|((b)<<9)|((c)<<6)|((d)<<3)|(e)))
@@ -563,15 +563,53 @@ static void draw_overlay(void)
     }
 }
 
-static void render_scene(void)
+static void compose_scene(void)
 {
-    gc9107_fill_rect(0, 0, LCD_W, LCD_H, paper_color());
+    clip_rect(0, 0, LCD_W, LCD_H, paper_color());
     draw_sky();
     draw_horizon();
     draw_obstacles();
     draw_dino();
     draw_score();
     draw_overlay();
+}
+
+static void render_scene(void)
+{
+    scene_render_frame(LCD_H, paper_color(), compose_scene);
+}
+
+static void render_region(int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    scene_render_region(x, y, w, h, paper_color(), compose_scene);
+}
+
+static void render_motion(int16_t old_x, int16_t old_y, int16_t old_w, int16_t old_h,
+                          int16_t new_x, int16_t new_y, int16_t new_w, int16_t new_h)
+{
+    int16_t left = old_x < new_x ? old_x : new_x;
+    int16_t top = old_y < new_y ? old_y : new_y;
+    int16_t right = (int16_t)((old_x + old_w) > (new_x + new_w)
+        ? old_x + old_w : new_x + new_w);
+    int16_t bottom = (int16_t)((old_y + old_h) > (new_y + new_h)
+        ? old_y + old_h : new_y + new_h);
+    render_region((int16_t)(left - 2), (int16_t)(top - 2),
+                  (int16_t)(right - left + 4), (int16_t)(bottom - top + 4));
+}
+
+static void obstacle_bounds(const Obstacle *obstacle, int16_t *x, int16_t *y,
+                            int16_t *w, int16_t *h)
+{
+    *x = obstacle->x;
+    if (obstacle->type == OB_BIRD) {
+        *y = GROUND_Y - 27; *w = 20; *h = 14;
+    } else if (obstacle->type == OB_LARGE) {
+        *y = GROUND_Y - 24; *w = 13; *h = 24;
+    } else if (obstacle->type == OB_DOUBLE) {
+        *y = GROUND_Y - 18; *w = 19; *h = 18;
+    } else {
+        *y = GROUND_Y - 18; *w = 10; *h = 18;
+    }
 }
 
 static void on_hard_reset(void)
@@ -589,7 +627,6 @@ void app_init(void)
     g_rng = 0xACE1u;
     g_high_score = 0u;
     g_anim_frame = 0u;
-    g_render_skip = 0u;
     g_button_prev = button_raw();
     g_cloud_x[0] = 22;
     g_cloud_x[1] = 82;
@@ -600,15 +637,61 @@ void app_init(void)
 
 void app_update(uint32_t frame)
 {
+    Obstacle old_obstacles[MAX_OBSTACLES];
+    int16_t old_cloud_x[3];
+    int16_t old_dino_y = g_dino_y;
+    uint16_t old_score = g_score;
+    uint16_t old_paper = paper_color();
+    uint8_t old_score_flash = g_score_flash;
+    uint8_t old_state = g_state;
+    uint8_t i;
     (void)frame;
     vape_coil_off();
+    for (i = 0u; i < MAX_OBSTACLES; i++) old_obstacles[i] = g_obstacles[i];
+    for (i = 0u; i < 3u; i++) old_cloud_x[i] = g_cloud_x[i];
     update_input();
     update_game();
-    g_render_skip++;
-    if (g_render_skip >= 2u) {
-        g_render_skip = 0u;
+
+    if (g_state != old_state || paper_color() != old_paper) {
         render_scene();
+        return;
     }
+
+    render_motion(DINO_X, old_dino_y, DINO_W, DINO_H,
+                  DINO_X, g_dino_y, DINO_W, DINO_H);
+    for (i = 0u; i < MAX_OBSTACLES; i++) {
+        int16_t old_x, old_y, old_w, old_h;
+        int16_t new_x, new_y, new_w, new_h;
+        if (!old_obstacles[i].active && !g_obstacles[i].active) continue;
+        if (old_obstacles[i].active)
+            obstacle_bounds(&old_obstacles[i], &old_x, &old_y, &old_w, &old_h);
+        else
+            obstacle_bounds(&g_obstacles[i], &old_x, &old_y, &old_w, &old_h);
+        if (g_obstacles[i].active)
+            obstacle_bounds(&g_obstacles[i], &new_x, &new_y, &new_w, &new_h);
+        else {
+            new_x = old_x; new_y = old_y; new_w = old_w; new_h = old_h;
+        }
+        render_motion(old_x, old_y, old_w, old_h, new_x, new_y, new_w, new_h);
+    }
+    for (i = 0u; i < 3u; i++) {
+        int16_t y = i == 0u ? 42 : (i == 1u ? 59 : 34);
+        int16_t delta = (int16_t)(old_cloud_x[i] - g_cloud_x[i]);
+        if (delta < 0) delta = (int16_t)-delta;
+        if (old_cloud_x[i] != g_cloud_x[i]) {
+            if (delta > 32) {
+                render_region((int16_t)(old_cloud_x[i] - 2), (int16_t)(y - 2), 26, 8);
+                render_region((int16_t)(g_cloud_x[i] - 2), (int16_t)(y - 2), 26, 8);
+            } else {
+                render_motion(old_cloud_x[i], y, 22, 4,
+                              g_cloud_x[i], y, 22, 4);
+            }
+        }
+    }
+    if (g_distance)
+        render_region(0, (int16_t)(GROUND_Y - 1), LCD_W, 12);
+    if (g_score != old_score || g_score_flash != old_score_flash)
+        render_region(64, 8, 64, 10);
 }
 
 void app_wake(void)

@@ -13,8 +13,10 @@ set SIZE="C:\Program Files (x86)\Arm GNU Toolchain arm-none-eabi\14.2 rel1\bin\a
 if not defined VAPORWARE for %%I in ("%~dp0..\..\..\Vaporware\src") do set "VAPORWARE=%%~fI"
 
 set CPU=-mcpu=cortex-m0 -mthumb
-set INC=-I"%VAPORWARE%\include"
+set INC=-I"%VAPORWARE%\include" -I"..\Shared"
 set CFLAGS=%CPU% %INC% -Os -ffunction-sections -fdata-sections -Wall -Wextra -std=c11
+if not defined RAZ_COIL_OUTPUT set RAZ_COIL_OUTPUT=1
+set CFLAGS=%CFLAGS% -DRAZ_COIL_OUTPUT=%RAZ_COIL_OUTPUT%
 set STREAM_OBJECTS=
 set STREAM_LINK_FLAGS=
 if "%SCREEN_STREAMER%"=="1" (
@@ -29,7 +31,8 @@ if not exist build mkdir build
 %GCC% %CPU% -x assembler-with-cpp -c "%VAPORWARE%\src\startup.s" -o build\startup.o || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\system.c"  -o build\system.o  || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\display.c" -o build\display.o || goto :error
-%GCC% %CFLAGS% -c "%VAPORWARE%\src\vape.c"    -o build\vape.o    || goto :error
+%GCC% %CFLAGS% -c "..\Shared\vape.c"          -o build\vape.o    || goto :error
+%GCC% %CFLAGS% -c "..\Shared\scene_compositor.c" -o build\scene_compositor.o || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\button.c"  -o build\button.o  || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\battery.c" -o build\battery.o || goto :error
 %GCC% %CFLAGS% -c "%VAPORWARE%\src\nv.c"      -o build\nv.o      || goto :error
@@ -37,8 +40,8 @@ if not exist build mkdir build
 if "%SCREEN_STREAMER%"=="1" %GCC% %CFLAGS% -c "..\ScreenStreamer\screen_stream.c" -o build\screen_stream.o || goto :error
 %GCC% %CFLAGS% -c src\main.c -o build\mario.o || goto :error
 
-%GCC% %CPU% -T"%VAPORWARE%\n32g031.ld" -Wl,--gc-sections %STREAM_LINK_FLAGS% -Wl,-Map=build\%APP_NAME%.map -nostdlib -lnosys ^
-  build\startup.o build\system.o build\display.o build\vape.o ^
+%GCC% %CPU% -T"..\Shared\n32g031_app.ld" -Wl,--gc-sections %STREAM_LINK_FLAGS% -Wl,-Map=build\%APP_NAME%.map -nostdlib -lnosys ^
+  build\startup.o build\system.o build\display.o build\vape.o build\scene_compositor.o ^
   build\button.o build\battery.o build\nv.o build\app.o %STREAM_OBJECTS% build\mario.o ^
   -o build\%APP_NAME%.elf || goto :error
 

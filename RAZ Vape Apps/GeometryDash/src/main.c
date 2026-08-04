@@ -1,8 +1,8 @@
-/* Geometry Dash-style one-button platform game for the RAZ DC25000.
+/* Geometry Dash-style one-button gravity game for the RAZ DC25000.
  *
- * The cube runs automatically. Press to jump; keep holding to jump again on
- * each landing. The complete handcrafted course includes spikes, pits,
- * platforms, jump pads, optional jump orbs, speed portals, and a finish gate.
+ * The cube runs automatically and each press reverses gravity. The handcrafted
+ * course mixes floor, ceiling, and suspended hazards with solid platforms,
+ * pits, speed portals, and a finish gate.
  * The app is display-only and never enables the coil.
  */
 #include <stdint.h>
@@ -10,6 +10,7 @@
 #include "app.h"
 #include "button.h"
 #include "display.h"
+#include "scene_compositor.h"
 #include "system.h"
 #include "vape.h"
 
@@ -39,6 +40,7 @@
 #define TILE             8
 #define GROUND_ROW      14
 #define GROUND_Y       (GROUND_ROW * TILE)
+#define CEILING_H         8
 #define WORLD_TILES    242
 #define WORLD_W        (WORLD_TILES * TILE)
 #define CUBE_W          10
@@ -47,9 +49,7 @@
 #define FINISH_X       (FINISH_TILE * TILE)
 #define FP_SHIFT          2
 #define GRAVITY_FP        3
-#define JUMP_FP         (-31)
-#define PAD_JUMP_FP     (-38)
-#define ORB_JUMP_FP     (-35)
+#define FLIP_KICK_FP     14
 #define MAX_FALL_FP      24
 #define SLEEP_MS      60000u
 
@@ -69,14 +69,8 @@ typedef struct {
 
 typedef struct {
     uint8_t x;
-    uint8_t base_row;
-} JumpPad;
-
-typedef struct {
-    uint8_t x;
     uint8_t y;
-    uint8_t used;
-} JumpOrb;
+} FloatingHazard;
 
 /* Each platform occupies [x,x+w) and [y,y+h) in 8-pixel world tiles. */
 static const Platform g_platforms[] = {
@@ -98,15 +92,17 @@ static const Spike g_spikes[] = {
 };
 #define SPIKE_COUNT ((uint8_t)(sizeof(g_spikes) / sizeof(g_spikes[0])))
 
-static const JumpPad g_pads[] = {
-    {42,14}, {90,14}, {138,14}, {158,14}, {174,14}, {205,14}
+static const uint8_t g_ceiling_spikes[] = {
+    24,25, 34,35, 57,58, 87,88, 111, 120,121,
+    146,147, 169,170, 198, 212,213, 228
 };
-#define PAD_COUNT ((uint8_t)(sizeof(g_pads) / sizeof(g_pads[0])))
+#define CEILING_SPIKE_COUNT ((uint8_t)(sizeof(g_ceiling_spikes) / sizeof(g_ceiling_spikes[0])))
 
-static JumpOrb g_orbs[] = {
-    {73,8,0}, {102,7,0}, {135,8,0}, {156,7,0}, {184,8,0}, {214,8,0}
+static const FloatingHazard g_floating_hazards[] = {
+    {43,7}, {64,8}, {80,6}, {108,7}, {133,8},
+    {156,6}, {183,7}, {204,8}, {220,6}
 };
-#define ORB_COUNT ((uint8_t)(sizeof(g_orbs) / sizeof(g_orbs[0])))
+#define FLOATING_HAZARD_COUNT ((uint8_t)(sizeof(g_floating_hazards) / sizeof(g_floating_hazards[0])))
 
 static int16_t g_cube_x;
 static int16_t g_cube_y;
@@ -114,13 +110,12 @@ static int16_t g_cube_y_fp;
 static int16_t g_vy_fp;
 static int16_t g_camera_x;
 static uint16_t g_attempt;
-static uint16_t g_frame;
 static uint8_t g_state;
-static uint8_t g_on_ground;
+static uint8_t g_on_surface;
+static uint8_t g_gravity_up;
 static uint8_t g_button_prev;
 static uint8_t g_rotation;
 static uint8_t g_speed;
-static uint8_t g_render_skip;
 static uint8_t g_show_help;
 
 static void clip_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
@@ -130,7 +125,7 @@ static void clip_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color
     if (x + w > LCD_W) w = (int16_t)(LCD_W - x);
     if (y + h > LCD_H) h = (int16_t)(LCD_H - y);
     if (w > 0 && h > 0)
-        gc9107_fill_rect((uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, color);
+        scene_fill_rect(x, y, w, h, color);
 }
 
 #define GLYPH(a,b,c,d,e) ((uint16_t)(((a)<<12)|((b)<<9)|((c)<<6)|((d)<<3)|(e)))
@@ -207,6 +202,7 @@ static uint8_t solid_pixel(int16_t px, int16_t py)
 {
     uint8_t i;
     if (px < 0 || px >= WORLD_W || py < 0) return 0u;
+    if (py < CEILING_H) return 1u;
     if (py >= GROUND_Y && !in_pit((int16_t)(px / TILE))) return 1u;
     for (i = 0; i < PLATFORM_COUNT; i++) {
         const Platform *p = &g_platforms[i];
@@ -224,12 +220,6 @@ static uint8_t overlaps(int16_t ax, int16_t ay, int16_t aw, int16_t ah,
     return (uint8_t)(ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by);
 }
 
-static void reset_orbs(void)
-{
-    uint8_t i;
-    for (i = 0; i < ORB_COUNT; i++) g_orbs[i].used = 0u;
-}
-
 static void reset_attempt(uint8_t start_playing)
 {
     vape_coil_off();
@@ -238,16 +228,12 @@ static void reset_attempt(uint8_t start_playing)
     g_cube_y_fp = (int16_t)(g_cube_y << FP_SHIFT);
     g_vy_fp = 0;
     g_camera_x = 0;
-    g_on_ground = 1u;
+    g_on_surface = 1u;
+    g_gravity_up = 0u;
     g_rotation = 0u;
     g_speed = 2u;
     g_state = start_playing ? ST_PLAY : ST_READY;
     g_show_help = (uint8_t)!start_playing;
-    reset_orbs();
-    if (start_playing) {
-        g_vy_fp = JUMP_FP;
-        g_on_ground = 0u;
-    }
 }
 
 static void die(void)
@@ -255,24 +241,6 @@ static void die(void)
     if (g_state != ST_PLAY) return;
     vape_coil_off();
     g_state = ST_DEAD;
-}
-
-static void try_orb_jump(void)
-{
-    uint8_t i;
-    for (i = 0; i < ORB_COUNT; i++) {
-        int16_t ox;
-        int16_t oy;
-        if (g_orbs[i].used) continue;
-        ox = (int16_t)(g_orbs[i].x * TILE);
-        oy = (int16_t)(g_orbs[i].y * TILE);
-        if (overlaps(g_cube_x, g_cube_y, CUBE_W, CUBE_H, ox, oy, 8, 8)) {
-            g_orbs[i].used = 1u;
-            g_vy_fp = ORB_JUMP_FP;
-            g_on_ground = 0u;
-            return;
-        }
-    }
 }
 
 static void update_input(void)
@@ -284,23 +252,17 @@ static void update_input(void)
         if (g_state == ST_READY) {
             g_state = ST_PLAY;
             g_show_help = 0u;
-            g_vy_fp = JUMP_FP;
-            g_on_ground = 0u;
         } else if (g_state == ST_DEAD) {
             if (g_attempt < 999u) g_attempt++;
             reset_attempt(1u);
         } else if (g_state == ST_WON) {
             g_attempt = 1u;
             reset_attempt(1u);
-        } else if (!g_on_ground) {
-            try_orb_jump();
+        } else if (g_state == ST_PLAY) {
+            g_gravity_up = (uint8_t)!g_gravity_up;
+            g_vy_fp = g_gravity_up ? -FLIP_KICK_FP : FLIP_KICK_FP;
+            g_on_surface = 0u;
         }
-    }
-
-    /* Holding is intentional: the cube jumps again as soon as it lands. */
-    if (g_state == ST_PLAY && pressed && g_on_ground) {
-        g_vy_fp = JUMP_FP;
-        g_on_ground = 0u;
     }
     g_button_prev = pressed;
 }
@@ -309,11 +271,12 @@ static void update_vertical(void)
 {
     int16_t old_y = g_cube_y;
     int16_t new_y;
-    g_vy_fp = (int16_t)(g_vy_fp + GRAVITY_FP);
+    g_vy_fp = (int16_t)(g_vy_fp + (g_gravity_up ? -GRAVITY_FP : GRAVITY_FP));
     if (g_vy_fp > MAX_FALL_FP) g_vy_fp = MAX_FALL_FP;
+    if (g_vy_fp < -MAX_FALL_FP) g_vy_fp = -MAX_FALL_FP;
     g_cube_y_fp = (int16_t)(g_cube_y_fp + g_vy_fp);
     new_y = (int16_t)(g_cube_y_fp >> FP_SHIFT);
-    g_on_ground = 0u;
+    g_on_surface = 0u;
 
     if (g_vy_fp >= 0) {
         int16_t bottom = (int16_t)(new_y + CUBE_H);
@@ -324,40 +287,25 @@ static void update_vertical(void)
                 new_y = (int16_t)(top - CUBE_H);
                 g_cube_y_fp = (int16_t)(new_y << FP_SHIFT);
                 g_vy_fp = 0;
-                g_on_ground = 1u;
+                g_on_surface = 1u;
                 g_rotation = 0u;
             }
         }
     } else {
-        if (new_y < 0) new_y = 0;
         if (solid_pixel((int16_t)(g_cube_x + 2), new_y) ||
             solid_pixel((int16_t)(g_cube_x + CUBE_W - 3), new_y)) {
             int16_t row = (int16_t)(new_y / TILE);
             new_y = (int16_t)((row + 1) * TILE);
             g_cube_y_fp = (int16_t)(new_y << FP_SHIFT);
             g_vy_fp = 0;
+            g_on_surface = 1u;
+            g_rotation = 0u;
         }
     }
     g_cube_y = new_y;
-    if (!g_on_ground) g_rotation = (uint8_t)((g_rotation + 1u) & 7u);
+    if (!g_on_surface)
+        g_rotation = (uint8_t)((g_rotation + (g_gravity_up ? 7u : 1u)) & 7u);
     if (g_cube_y > 150) die();
-}
-
-static void check_jump_pads(void)
-{
-    uint8_t i;
-    int16_t bottom = (int16_t)(g_cube_y + CUBE_H);
-    if (g_vy_fp < 0) return;
-    for (i = 0; i < PAD_COUNT; i++) {
-        int16_t px = (int16_t)(g_pads[i].x * TILE);
-        int16_t py = (int16_t)(g_pads[i].base_row * TILE);
-        if (g_cube_x + CUBE_W > px && g_cube_x < px + TILE &&
-            bottom >= py - 3 && bottom <= py + 3) {
-            g_vy_fp = PAD_JUMP_FP;
-            g_on_ground = 0u;
-            return;
-        }
-    }
 }
 
 static void check_spikes(void)
@@ -367,6 +315,23 @@ static void check_spikes(void)
         int16_t sx = (int16_t)(g_spikes[i].x * TILE + 1);
         int16_t sy = (int16_t)(g_spikes[i].base_row * TILE - 7);
         if (overlaps(g_cube_x, g_cube_y, CUBE_W, CUBE_H, sx, sy, 6, 7)) {
+            die();
+            return;
+        }
+    }
+    for (i = 0; i < CEILING_SPIKE_COUNT; i++) {
+        int16_t sx = (int16_t)(g_ceiling_spikes[i] * TILE + 1);
+        if (overlaps(g_cube_x, g_cube_y, CUBE_W, CUBE_H,
+                     sx, CEILING_H, 6, 7)) {
+            die();
+            return;
+        }
+    }
+    for (i = 0; i < FLOATING_HAZARD_COUNT; i++) {
+        int16_t sx = (int16_t)(g_floating_hazards[i].x * TILE);
+        int16_t sy = (int16_t)(g_floating_hazards[i].y * TILE);
+        if (overlaps(g_cube_x, g_cube_y, CUBE_W, CUBE_H,
+                     sx + 1, sy + 1, 6, 6)) {
             die();
             return;
         }
@@ -388,7 +353,6 @@ static void move_forward(void)
 
 static void update_game(void)
 {
-    int16_t target;
     if (g_state != ST_PLAY) return;
 
     g_speed = (uint8_t)((g_cube_x >= 135 * TILE && g_cube_x < 202 * TILE) ? 3u : 2u);
@@ -396,18 +360,19 @@ static void update_game(void)
     if (g_state != ST_PLAY) return;
     move_forward();
     if (g_state != ST_PLAY) return;
-    check_jump_pads();
     check_spikes();
 
     if (g_cube_x >= FINISH_X) {
         g_state = ST_WON;
-        g_on_ground = 0u;
+        g_on_surface = 0u;
     }
 
-    target = (int16_t)(g_cube_x - 28);
-    if (target < 0) target = 0;
-    if (target > WORLD_W - LCD_W) target = WORLD_W - LCD_W;
-    g_camera_x = target;
+    /* Page the camera only when the cube reaches the right side. Between page
+     * changes the world stays in display RAM and only the cube/HUD are dirty. */
+    if (g_cube_x - g_camera_x > 96) {
+        g_camera_x = (int16_t)(g_camera_x + 64);
+        if (g_camera_x > WORLD_W - LCD_W) g_camera_x = WORLD_W - LCD_W;
+    }
 }
 
 static void draw_background(void)
@@ -415,7 +380,7 @@ static void draw_background(void)
     int16_t x;
     int16_t offset;
     uint8_t row;
-    gc9107_fill_rect(0, HUD_H, LCD_W, LCD_H - HUD_H, C_BG);
+    clip_rect(0, HUD_H, LCD_W, LCD_H - HUD_H, C_BG);
     offset = (int16_t)(-((g_camera_x / 3) & 15));
     for (x = offset; x < LCD_W; x += 16)
         clip_rect(x, HUD_H, 1, GROUND_Y, C_GRID);
@@ -447,6 +412,8 @@ static void draw_ground_and_platforms(void)
     int16_t first = (int16_t)(g_camera_x / TILE);
     int16_t tx;
     uint8_t i;
+    clip_rect(0, HUD_H, LCD_W, CEILING_H, C_GROUND);
+    clip_rect(0, HUD_H + CEILING_H - 2, LCD_W, 2, C_CYAN);
     for (tx = first; tx <= first + 17; tx++) {
         if (!in_pit(tx)) {
             int16_t sx = (int16_t)(tx * TILE - g_camera_x);
@@ -478,24 +445,26 @@ static void draw_spike(const Spike *s)
     clip_rect(x, (int16_t)(base - 2), 8, 2, C_RED);
 }
 
-static void draw_pad(const JumpPad *p)
+static void draw_ceiling_spike(uint8_t tile)
 {
-    int16_t x = (int16_t)(p->x * TILE - g_camera_x);
-    int16_t y = (int16_t)(HUD_H + p->base_row * TILE - 3);
+    int16_t x = (int16_t)(tile * TILE - g_camera_x);
+    int16_t tip = HUD_H + CEILING_H;
     if (x < -TILE || x >= LCD_W) return;
-    clip_rect(x, y, TILE, 3, C_ORANGE);
-    clip_rect((int16_t)(x + 1), y, 6, 1, C_YELLOW);
+    clip_rect(x, tip, 8, 2, C_RED);
+    clip_rect((int16_t)(x + 1), (int16_t)(tip + 2), 6, 2, C_MAGENTA);
+    clip_rect((int16_t)(x + 2), (int16_t)(tip + 4), 4, 2, C_MAGENTA);
+    clip_rect((int16_t)(x + 3), (int16_t)(tip + 6), 2, 2, C_RED);
 }
 
-static void draw_orb(const JumpOrb *o)
+static void draw_floating_hazard(const FloatingHazard *hazard)
 {
-    int16_t x = (int16_t)(o->x * TILE - g_camera_x);
-    int16_t y = (int16_t)(HUD_H + o->y * TILE);
-    if (o->used || x < -8 || x >= LCD_W) return;
-    clip_rect((int16_t)(x + 2), y, 4, 8, C_YELLOW);
-    clip_rect(x, (int16_t)(y + 2), 8, 4, C_YELLOW);
-    clip_rect((int16_t)(x + 2), (int16_t)(y + 2), 4, 4, C_BG);
-    clip_rect((int16_t)(x + 3), (int16_t)(y + 3), 2, 2, C_ORANGE);
+    int16_t x = (int16_t)(hazard->x * TILE - g_camera_x);
+    int16_t y = (int16_t)(HUD_H + hazard->y * TILE);
+    if (x < -8 || x >= LCD_W) return;
+    clip_rect((int16_t)(x + 3), y, 2, 8, C_RED);
+    clip_rect(x, (int16_t)(y + 3), 8, 2, C_RED);
+    clip_rect((int16_t)(x + 1), (int16_t)(y + 1), 6, 6, C_MAGENTA);
+    clip_rect((int16_t)(x + 3), (int16_t)(y + 3), 2, 2, C_YELLOW);
 }
 
 static void draw_portal(uint8_t tile, uint16_t color)
@@ -526,7 +495,8 @@ static void draw_cube(void)
 {
     int16_t x = (int16_t)(g_cube_x - g_camera_x);
     int16_t y = (int16_t)(HUD_H + g_cube_y);
-    uint16_t body = (g_speed == 3u) ? C_MAGENTA : C_CYAN;
+    uint16_t body = g_gravity_up ? C_YELLOW :
+                    ((g_speed == 3u) ? C_MAGENTA : C_CYAN);
     if (g_state == ST_DEAD) {
         clip_rect((int16_t)(x - 4), (int16_t)(y - 3), 3, 3, C_CYAN);
         clip_rect((int16_t)(x + 11), y, 3, 3, C_MAGENTA);
@@ -557,7 +527,7 @@ static void draw_hud(void)
 {
     uint8_t bar;
     uint8_t percent;
-    gc9107_fill_rect(0, 0, LCD_W, HUD_H, COL_BLACK);
+    clip_rect(0, 0, LCD_W, HUD_H, COL_BLACK);
     draw_text("ATTEMPT", 1, 2, COL_WHITE);
     draw_number(g_attempt, 3, 31, 2, C_CYAN);
     percent = (uint8_t)(((uint32_t)g_cube_x * 100u) / FINISH_X);
@@ -575,8 +545,8 @@ static void draw_overlay(void)
     if (g_state == ST_READY && g_show_help) {
         clip_rect(8, 38, 112, 50, COL_BLACK);
         draw_text("GEOMETRY DASH", 38, 46, C_CYAN);
-        draw_text("PRESS TO JUMP", 36, 61, COL_WHITE);
-        draw_text("HOLD TO CHAIN", 36, 74, C_YELLOW);
+        draw_text("TAP FLIPS GRAV", 36, 61, COL_WHITE);
+        draw_text("AVOID ALL SIDES", 34, 74, C_YELLOW);
     } else if (g_state == ST_DEAD) {
         clip_rect(27, 53, 74, 35, COL_BLACK);
         draw_text("CRASH", 54, 61, C_RED);
@@ -590,20 +560,32 @@ static void draw_overlay(void)
     }
 }
 
-static void render_scene(void)
+static void compose_scene(void)
 {
     uint8_t i;
     draw_background();
     draw_ground_and_platforms();
-    for (i = 0; i < PAD_COUNT; i++) draw_pad(&g_pads[i]);
     for (i = 0; i < SPIKE_COUNT; i++) draw_spike(&g_spikes[i]);
-    for (i = 0; i < ORB_COUNT; i++) draw_orb(&g_orbs[i]);
+    for (i = 0; i < CEILING_SPIKE_COUNT; i++)
+        draw_ceiling_spike(g_ceiling_spikes[i]);
+    for (i = 0; i < FLOATING_HAZARD_COUNT; i++)
+        draw_floating_hazard(&g_floating_hazards[i]);
     draw_portal(135u, C_MAGENTA);
     draw_portal(202u, C_CYAN);
     draw_finish_gate();
     draw_cube();
     draw_hud();
     draw_overlay();
+}
+
+static void render_scene(void)
+{
+    scene_render_frame(LCD_H, COL_BLACK, compose_scene);
+}
+
+static void render_region(int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    scene_render_region(x, y, w, h, COL_BLACK, compose_scene);
 }
 
 static void on_hard_reset(void)
@@ -620,8 +602,6 @@ void app_init(void)
     app_set_sleep_timeout(SLEEP_MS);
     app_set_hold_reset(10000u, on_hard_reset);
     g_attempt = 1u;
-    g_frame = 0u;
-    g_render_skip = 0u;
     g_button_prev = button_raw();
     reset_attempt(0u);
     render_scene();
@@ -629,16 +609,33 @@ void app_init(void)
 
 void app_update(uint32_t frame)
 {
+    int16_t old_cube_x = g_cube_x;
+    int16_t old_cube_y = g_cube_y;
+    int16_t old_camera_x = g_camera_x;
+    uint16_t old_attempt = g_attempt;
+    uint8_t old_state = g_state;
     (void)frame;
-    g_frame++;
     vape_coil_off();
     update_input();
     update_game();
-    g_render_skip++;
-    if (g_render_skip >= 2u) {
-        g_render_skip = 0u;
+
+    if (g_camera_x != old_camera_x || g_state != old_state || g_attempt != old_attempt) {
         render_scene();
+        return;
     }
+    {
+        int16_t old_x = (int16_t)(old_cube_x - g_camera_x);
+        int16_t new_x = (int16_t)(g_cube_x - g_camera_x);
+        int16_t left = old_x < new_x ? old_x : new_x;
+        int16_t top = old_cube_y < g_cube_y ? old_cube_y : g_cube_y;
+        int16_t right = old_x > new_x ? old_x : new_x;
+        int16_t bottom = old_cube_y > g_cube_y ? old_cube_y : g_cube_y;
+        render_region((int16_t)(left - 5), (int16_t)(HUD_H + top - 6),
+                      (int16_t)(right - left + CUBE_W + 10),
+                      (int16_t)(bottom - top + CUBE_H + 12));
+    }
+    render_region(3, 10, 122, 5);
+    render_region(92, 1, 19, 7);
 }
 
 void app_wake(void)

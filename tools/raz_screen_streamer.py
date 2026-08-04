@@ -56,6 +56,8 @@ class CommandStreamDecoder:
     OP_FILL = 1
     OP_RAW = 2
     OP_RLE = 3
+    RECORD_MAGIC = b"RZD3"
+    RECORD_PREFIX_BYTES = 8
 
     def __init__(self, width: int, height: int) -> None:
         self.width = width
@@ -63,6 +65,8 @@ class CommandStreamDecoder:
         self.framebuffer = bytearray(width * height * 3)
         self.pending = bytearray()
         self.color_cache: dict[int, bytes] = {}
+        self.framed: bool | None = None
+        self.recovered_records = 0
 
     def color(self, value: int) -> bytes:
         result = self.color_cache.get(value)
@@ -109,8 +113,75 @@ class CommandStreamDecoder:
                 pixel += 1
             offset += 3
 
-    def feed(self, data: bytes) -> int:
-        self.pending.extend(data)
+    def _decode_record(self, record: bytes) -> int:
+        if len(record) < 5:
+            raise ValueError("short display record")
+        opcode, x, y, width, height = record[:5]
+        if width == 0 or height == 0:
+            raise ValueError("zero-sized display record")
+        pixels = width * height
+        if opcode == self.OP_FILL:
+            if len(record) != 7:
+                raise ValueError("invalid fill record length")
+            value = record[5] | (record[6] << 8)
+            self.fill(x, y, width, height, self.color(value))
+        elif opcode == self.OP_RAW:
+            if len(record) != 5 + pixels * 2:
+                raise ValueError("invalid raw record length")
+            self.apply_raw(x, y, width, height, memoryview(record)[5:])
+        elif opcode == self.OP_RLE:
+            encoded_offset = 5
+            decoded = 0
+            while decoded < pixels:
+                if len(record) - encoded_offset < 3:
+                    raise ValueError("short RLE display record")
+                run = record[encoded_offset]
+                if run == 0 or decoded + run > pixels:
+                    raise ValueError("invalid RLE display record")
+                decoded += run
+                encoded_offset += 3
+            if encoded_offset != len(record):
+                raise ValueError("trailing RLE display bytes")
+            self.apply_rle(x, y, width, height, memoryview(record)[5:])
+        else:
+            raise ValueError(f"unknown display opcode 0x{opcode:02X}")
+        return 1
+
+    def _feed_framed(self) -> int:
+        applied = 0
+        while True:
+            marker = self.pending.find(self.RECORD_MAGIC)
+            if marker < 0:
+                keep = min(len(self.pending), len(self.RECORD_MAGIC) - 1)
+                if len(self.pending) > keep:
+                    del self.pending[:-keep]
+                    self.recovered_records += 1
+                break
+            if marker:
+                del self.pending[:marker]
+                self.recovered_records += 1
+            if len(self.pending) < self.RECORD_PREFIX_BYTES:
+                break
+            command_bytes = self.pending[4] | (self.pending[5] << 8)
+            inverse = self.pending[6] | (self.pending[7] << 8)
+            if command_bytes < 7 or (command_bytes ^ inverse) != 0xFFFF:
+                del self.pending[0]
+                self.recovered_records += 1
+                continue
+            total = self.RECORD_PREFIX_BYTES + command_bytes
+            if len(self.pending) < total:
+                break
+            record = bytes(self.pending[self.RECORD_PREFIX_BYTES : total])
+            del self.pending[:total]
+            try:
+                applied += self._decode_record(record)
+            except ValueError:
+                # A damaged record affects only itself; the next RZD3 marker
+                # restores alignment without terminating the live viewer.
+                self.recovered_records += 1
+        return applied
+
+    def _feed_legacy(self) -> int:
         offset = 0
         applied = 0
         view = bytes(self.pending)
@@ -154,6 +225,17 @@ class CommandStreamDecoder:
         if offset:
             del self.pending[:offset]
         return applied
+
+    def feed(self, data: bytes) -> int:
+        self.pending.extend(data)
+        if self.framed is None and self.pending:
+            if self.pending[0] in (self.OP_FILL, self.OP_RAW, self.OP_RLE):
+                self.framed = False
+            elif len(self.pending) >= len(self.RECORD_MAGIC):
+                self.framed = True
+        if self.framed is None:
+            return 0
+        return self._feed_framed() if self.framed else self._feed_legacy()
 
 
 def decode_rgb121(packed: bytes, width: int, height: int) -> bytes:

@@ -13,6 +13,7 @@
 #include "app.h"
 #include "button.h"
 #include "display.h"
+#include "scene_compositor.h"
 #include "vape.h"
 
 #define LCD_W                 128
@@ -155,8 +156,6 @@ static int16_t g_top_x;
 static int16_t g_moving_x_fp;
 static uint16_t g_height;
 static uint16_t g_best;
-static uint16_t g_frame;
-static uint8_t g_render_skip;
 static uint8_t g_combo;
 static uint8_t g_feedback;
 static uint8_t g_feedback_timer;
@@ -170,8 +169,7 @@ static void clip_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color
     if (x + w > LCD_W) w = (int16_t)(LCD_W - x);
     if (y + h > LCD_H) h = (int16_t)(LCD_H - y);
     if (w > 0 && h > 0)
-        display_fill_rect((uint16_t)x, (uint16_t)y, (uint16_t)w,
-                          (uint16_t)h, color);
+        scene_fill_rect(x, y, w, h, color);
 }
 
 static const uint8_t *glyph_for(char c)
@@ -285,13 +283,8 @@ static void draw_block(int16_t x, int16_t y, uint8_t width, uint8_t color,
 static void draw_sky(void)
 {
     static const uint8_t stars[][2] = {
-        {7,31},{19,42},{34,28},{49,53},{62,35},{78,46},
-        {91,29},{105,57},{119,38},{15,72},{70,67},{113,79}
+        {8,32},{28,46},{50,29},{74,52},{96,34},{118,60}
     };
-    static const uint8_t far_x[] = {0,13,25,40,53,66,82,95,109,121};
-    static const uint8_t far_h[] = {21,30,18,37,25,43,29,35,23,40};
-    static const uint8_t near_x[] = {0,17,31,48,65,83,101,116};
-    static const uint8_t near_h[] = {29,41,34,51,37,46,32,43};
     uint8_t theme = (uint8_t)((g_height / 10u) % 3u);
     uint8_t band;
     uint8_t i;
@@ -301,38 +294,22 @@ static void draw_sky(void)
                   g_sky[theme][band]);
     clip_rect(0, 143, LCD_W, 17, g_sky[theme][5]);
 
-    for (i = 0u; i < (uint8_t)(sizeof(stars) / sizeof(stars[0])); i++) {
-        uint8_t twinkle = (uint8_t)((g_frame + i * 7u) & 31u);
-        if (theme != 2u && twinkle < 25u)
-            clip_rect(stars[i][0], stars[i][1], twinkle < 3u ? 2 : 1,
-                      twinkle < 3u ? 2 : 1, C_TEXT);
-    }
+    if (theme != 2u)
+        for (i = 0u; i < (uint8_t)(sizeof(stars) / sizeof(stars[0])); i++)
+            clip_rect(stars[i][0], stars[i][1], 1, 1, C_TEXT);
 
-    /* Pixel-art crescent and its cutout. */
+    /* A compact static skyline keeps the scene attractive without forcing the
+     * compositor through dozens of background primitives for every mover. */
     if (theme == 0u) {
-        clip_rect(103, 31, 10, 14, C_GOLD);
-        clip_rect(100, 34, 16, 8, C_GOLD);
-        clip_rect(105, 29, 6, 2, C_GOLD);
-        clip_rect(105, 45, 6, 2, C_GOLD);
-        clip_rect(104, 31, 9, 11, g_sky[theme][0]);
+        clip_rect(105, 31, 8, 12, C_GOLD);
+        clip_rect(101, 35, 14, 5, C_GOLD);
+        clip_rect(106, 31, 7, 9, g_sky[theme][0]);
     }
-
-    for (i = 0u; i < (uint8_t)(sizeof(far_x) / sizeof(far_x[0])); i++) {
-        int16_t y = (int16_t)(143 - far_h[i]);
-        clip_rect(far_x[i], y, 12, far_h[i], C_CITY_FAR);
-        if ((i & 1u) == 0u)
-            clip_rect((int16_t)(far_x[i] + 4), (int16_t)(y + 6), 2, 2,
-                      C_WINDOW);
-    }
-    for (i = 0u; i < (uint8_t)(sizeof(near_x) / sizeof(near_x[0])); i++) {
-        int16_t y = (int16_t)(149 - near_h[i]);
-        clip_rect(near_x[i], y, 16, near_h[i], C_CITY_NEAR);
-        clip_rect((int16_t)(near_x[i] + 4), (int16_t)(y + 8), 2, 3,
-                  (i & 1u) ? C_WINDOW : C_MUTED);
-        if (near_h[i] > 36u)
-            clip_rect((int16_t)(near_x[i] + 10), (int16_t)(y + 19), 2, 3,
-                      C_WINDOW);
-    }
+    clip_rect(0, 126, 25, 23, C_CITY_FAR);
+    clip_rect(25, 116, 29, 33, C_CITY_FAR);
+    clip_rect(54, 130, 28, 19, C_CITY_FAR);
+    clip_rect(82, 120, 24, 29, C_CITY_FAR);
+    clip_rect(106, 128, 22, 21, C_CITY_FAR);
     clip_rect(0, 149, LCD_W, 11, C_CITY_NEAR);
     clip_rect(0, 149, LCD_W, 1, C_HUD_EDGE);
 }
@@ -341,7 +318,7 @@ static void draw_tower(void)
 {
     uint16_t first = first_visible_level();
     uint8_t i;
-    int16_t shake = (g_impact_timer && (g_impact_timer & 1u)) ? 1 : 0;
+    int16_t shake = 0;
 
     if (first == 0u) {
         clip_rect(BASE_X - 5, BASE_Y + BLOCK_H, BASE_W + 10, 2, C_PANEL_EDGE);
@@ -465,7 +442,7 @@ static void draw_game_over(void)
     draw_text("TAP TO RETRY", 43, 99, 1u, C_TEXT);
 }
 
-static void render_scene(void)
+static void compose_scene(void)
 {
     draw_sky();
     draw_tower();
@@ -476,6 +453,16 @@ static void render_scene(void)
     draw_play_hint();
     if (g_state == ST_READY) draw_ready_overlay();
     draw_game_over();
+}
+
+static void render_scene(void)
+{
+    scene_render_frame(LCD_H, COL_BLACK, compose_scene);
+}
+
+static void render_region(int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    scene_render_region(x, y, w, h, COL_BLACK, compose_scene);
 }
 
 static void clear_effects(void)
@@ -689,8 +676,6 @@ void app_init(void)
     app_set_sleep_timeout(SLEEP_MS);
     app_set_hold_reset(10000u, on_hard_reset);
     g_best = 0u;
-    g_frame = 0u;
-    g_render_skip = 0u;
     g_button_prev = button_raw();
     reset_game(0u);
     render_scene();
@@ -698,17 +683,69 @@ void app_init(void)
 
 void app_update(uint32_t frame)
 {
+    Particle old_particles[MAX_PARTICLES];
+    FallingBlock old_falling = g_falling;
+    uint8_t old_state = g_state;
+    uint8_t old_feedback_timer = g_feedback_timer;
+    uint16_t old_height = g_height;
+    int16_t old_mover_x = (int16_t)(g_moving_x_fp >> FP_SHIFT);
+    int16_t old_mover_y = level_y((uint16_t)(g_height + 1u));
+    uint8_t i;
     (void)frame;
     vape_coil_off();
-    g_frame++;
+    for (i = 0u; i < MAX_PARTICLES; i++) old_particles[i] = g_particles[i];
     update_input();
     if (g_state == ST_PLAY) update_mover();
     update_effects();
-    g_render_skip++;
-    if (g_render_skip >= 2u) {
-        g_render_skip = 0u;
+
+    if (g_state != old_state || g_height != old_height) {
         render_scene();
+        return;
     }
+    /* Keep the next moving floor independent from a falling overhang. Merging
+     * them produced one increasingly tall dirty rectangle and repainted all
+     * the empty background between the two pieces. */
+    if (g_state == ST_PLAY) {
+        int16_t new_x = (int16_t)(g_moving_x_fp >> FP_SHIFT);
+        int16_t left = old_mover_x < new_x ? old_mover_x : new_x;
+        int16_t right = old_mover_x > new_x ? old_mover_x : new_x;
+        render_region((int16_t)(left - 2), (int16_t)(old_mover_y - 2),
+                      (int16_t)(right - left + g_top_width + 4), BLOCK_H + 4);
+    }
+    {
+        int16_t dirty_left = LCD_W;
+        int16_t dirty_top = LCD_H;
+        int16_t dirty_right = 0;
+        int16_t dirty_bottom = 0;
+#define INCLUDE_DIRTY(px, py, pw, ph) do { \
+            int16_t dx0 = (px); int16_t dy0 = (py); \
+            int16_t dx1 = (int16_t)(dx0 + (pw)); \
+            int16_t dy1 = (int16_t)(dy0 + (ph)); \
+            if (dx0 < dirty_left) dirty_left = dx0; \
+            if (dy0 < dirty_top) dirty_top = dy0; \
+            if (dx1 > dirty_right) dirty_right = dx1; \
+            if (dy1 > dirty_bottom) dirty_bottom = dy1; \
+        } while (0)
+        if (old_falling.active)
+            INCLUDE_DIRTY(old_falling.x, old_falling.y,
+                          old_falling.width, BLOCK_H);
+        if (g_falling.active)
+            INCLUDE_DIRTY(g_falling.x, g_falling.y,
+                          g_falling.width, BLOCK_H);
+        for (i = 0u; i < MAX_PARTICLES; i++) {
+            if (old_particles[i].life)
+                INCLUDE_DIRTY(old_particles[i].x, old_particles[i].y, 2, 2);
+            if (g_particles[i].life)
+                INCLUDE_DIRTY(g_particles[i].x, g_particles[i].y, 2, 2);
+        }
+#undef INCLUDE_DIRTY
+        if (dirty_right > dirty_left && dirty_bottom > dirty_top)
+            render_region((int16_t)(dirty_left - 2), (int16_t)(dirty_top - 2),
+                          (int16_t)(dirty_right - dirty_left + 4),
+                          (int16_t)(dirty_bottom - dirty_top + 4));
+    }
+    if ((!old_feedback_timer) != (!g_feedback_timer))
+        render_region(28, 27, 74, 27);
 }
 
 void app_wake(void)

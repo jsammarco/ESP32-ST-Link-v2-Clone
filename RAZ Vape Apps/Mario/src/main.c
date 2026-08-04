@@ -8,14 +8,15 @@
  * The course is a compact 8-pixel-tile recreation of the complete first
  * overworld level: question blocks, brick runs, four opening pipes, pits,
  * staircases, Goombas, a Koopa, coins, the flagpole, and the castle finish.
- * It is intentionally rendered from small primitives so it fits comfortably
- * in the N32G031's flash and uses no framebuffer RAM.
+ * It is rendered from small primitives into a shared four-row strip, avoiding
+ * both a full framebuffer and hundreds of tiny LCD writes per update.
  */
 #include <stdint.h>
 
 #include "app.h"
 #include "button.h"
 #include "display.h"
+#include "scene_compositor.h"
 #include "system.h"
 #include "vape.h"
 
@@ -174,7 +175,6 @@ static uint8_t g_tap_pending;
 static uint8_t g_back_px;
 static uint8_t g_resume_running;
 static uint8_t g_show_help;
-static uint8_t g_render_skip;
 
 static void clip_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
@@ -183,7 +183,7 @@ static void clip_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color
     if (x + w > LCD_W) w = (int16_t)(LCD_W - x);
     if (y + h > LCD_H) h = (int16_t)(LCD_H - y);
     if (w > 0 && h > 0)
-        gc9107_fill_rect((uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, color);
+        scene_fill_rect(x, y, w, h, color);
 }
 
 /* 3x5 font. Five packed rows, three bits per row. */
@@ -565,7 +565,6 @@ static void collect_and_collide(void)
 
 static void update_game(uint16_t now)
 {
-    int16_t target;
     if (g_state != ST_PLAY) return;
 
     if (g_back_px) {
@@ -602,15 +601,17 @@ static void update_game(uint16_t now)
         if (g_score <= 9000u) g_score = (uint16_t)(g_score + 1000u);
     }
 
-    target = (int16_t)(g_player_x - 32);
-    if (target < 0) target = 0;
-    if (target > WORLD_W - LCD_W) target = WORLD_W - LCD_W;
-    g_camera_x = target;
+    /* Page forward only. A short backstep remains useful for positioning, but
+     * completed sections never scroll back onto the display. */
+    if (g_player_x - g_camera_x > 96) {
+        g_camera_x = (int16_t)(g_camera_x + 64);
+        if (g_camera_x > WORLD_W - LCD_W) g_camera_x = WORLD_W - LCD_W;
+    }
 }
 
 static void draw_hud(void)
 {
-    gc9107_fill_rect(0, 0, LCD_W, HUD_H, COL_BLACK);
+    clip_rect(0, 0, LCD_W, HUD_H, COL_BLACK);
     draw_text("MARIO", 1, 1, COL_WHITE);
     draw_text("COIN", 38, 1, COL_WHITE);
     draw_text("WORLD", 74, 1, COL_WHITE);
@@ -646,7 +647,7 @@ static void draw_hill(int16_t world_x, uint8_t tall)
 static void draw_background(void)
 {
     int16_t cycle;
-    gc9107_fill_rect(0, HUD_H, LCD_W, LCD_H - HUD_H, COL_SKY);
+    clip_rect(0, HUD_H, LCD_W, LCD_H - HUD_H, COL_SKY);
     for (cycle = -64; cycle < WORLD_W / 2; cycle += 96) {
         draw_cloud(cycle, HUD_H + 20 + (uint8_t)((cycle / 96) & 1) * 10);
         draw_hill((int16_t)(cycle + 36), (uint8_t)((cycle / 96) & 1));
@@ -694,9 +695,16 @@ static void draw_world_tiles(void)
 {
     int16_t first_tx = (int16_t)(g_camera_x / TILE);
     int16_t last_tx = (int16_t)((g_camera_x + LCD_W) / TILE + 1);
+    int16_t first_ty = 0;
+    int16_t last_ty = -1;
     int16_t tx;
     int16_t ty;
-    for (ty = 0; ty < 18; ty++) {
+    if (scene_strip_top() > HUD_H)
+        first_ty = (int16_t)((scene_strip_top() - HUD_H) / TILE);
+    if (scene_strip_bottom() > HUD_H)
+        last_ty = (int16_t)((scene_strip_bottom() - 1u - HUD_H) / TILE);
+    if (last_ty > 17) last_ty = 17;
+    for (ty = first_ty; ty <= last_ty; ty++) {
         for (tx = first_tx; tx <= last_tx; tx++) {
             uint8_t kind = tile_kind(tx, ty, 0);
             if (kind != TILE_EMPTY) {
@@ -814,7 +822,7 @@ static void draw_overlay(void)
     }
 }
 
-static void render_scene(void)
+static void compose_scene(void)
 {
     uint8_t i;
     draw_background();
@@ -830,6 +838,16 @@ static void render_scene(void)
     draw_mario();
     draw_hud();
     draw_overlay();
+}
+
+static void render_scene(void)
+{
+    scene_render_frame(LCD_H, COL_BLACK, compose_scene);
+}
+
+static void render_region(int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    scene_render_region(x, y, w, h, COL_BLACK, compose_scene);
 }
 
 static void on_hard_reset(void)
@@ -848,24 +866,89 @@ void app_init(void)
     g_lives = 3u;
     g_frame = 0u;
     g_button_prev = button_raw();
-    g_render_skip = 0u;
     reset_level(1u);
     render_scene();
 }
 
 void app_update(uint32_t frame)
 {
+    Enemy old_enemies[ENEMY_COUNT];
+    uint8_t old_coin_taken[COIN_COUNT];
+    uint8_t old_block_used[BLOCK_COUNT];
+    int16_t old_player_x = g_player_x;
+    int16_t old_player_y = g_player_y;
+    int16_t old_camera_x = g_camera_x;
+    uint16_t old_score = g_score;
+    uint16_t old_time = g_time_left;
+    uint8_t old_coins = g_coins_total;
+    uint8_t old_state = g_state;
+    uint8_t old_lives = g_lives;
+    uint8_t old_help = g_show_help;
+    uint8_t i;
     uint16_t now = ms_now();
     (void)frame;
+    for (i = 0u; i < ENEMY_COUNT; i++) old_enemies[i] = g_enemies[i];
+    for (i = 0u; i < COIN_COUNT; i++) old_coin_taken[i] = g_coins[i].taken;
+    for (i = 0u; i < BLOCK_COUNT; i++) old_block_used[i] = g_block_used[i];
     g_frame++;
     vape_coil_off();
     update_input(now);
     update_game(now);
-    g_render_skip++;
-    if (g_render_skip >= 2u) {
-        g_render_skip = 0u;
+
+    if (g_camera_x != old_camera_x || g_state != old_state ||
+        g_lives != old_lives || g_show_help != old_help) {
         render_scene();
+        return;
     }
+    {
+        int16_t old_x = (int16_t)(old_player_x - g_camera_x);
+        int16_t new_x = (int16_t)(g_player_x - g_camera_x);
+        int16_t left = old_x < new_x ? old_x : new_x;
+        int16_t top = old_player_y < g_player_y ? old_player_y : g_player_y;
+        int16_t right = old_x > new_x ? old_x : new_x;
+        int16_t bottom = old_player_y > g_player_y ? old_player_y : g_player_y;
+        render_region((int16_t)(left - 2), (int16_t)(HUD_H + top - 2),
+                      (int16_t)(right - left + PLAYER_W + 4),
+                      (int16_t)(bottom - top + PLAYER_H + 4));
+    }
+    for (i = 0u; i < ENEMY_COUNT; i++) {
+        int16_t old_x = (int16_t)(old_enemies[i].x - g_camera_x);
+        int16_t new_x = (int16_t)(g_enemies[i].x - g_camera_x);
+        if (old_enemies[i].alive == g_enemies[i].alive &&
+            old_enemies[i].x == g_enemies[i].x &&
+            old_enemies[i].y == g_enemies[i].y &&
+            old_enemies[i].kind == g_enemies[i].kind) continue;
+        if ((!old_enemies[i].alive || old_x + ENEMY_W < 0 || old_x >= LCD_W) &&
+            (!g_enemies[i].alive || new_x + ENEMY_W < 0 || new_x >= LCD_W)) continue;
+        {
+            int16_t left = old_x < new_x ? old_x : new_x;
+            int16_t top = old_enemies[i].y < g_enemies[i].y
+                ? old_enemies[i].y : g_enemies[i].y;
+            int16_t right = old_x > new_x ? old_x : new_x;
+            int16_t bottom = old_enemies[i].y > g_enemies[i].y
+                ? old_enemies[i].y : g_enemies[i].y;
+            render_region((int16_t)(left - 2), (int16_t)(HUD_H + top - 2),
+                          (int16_t)(right - left + ENEMY_W + 4),
+                          (int16_t)(bottom - top + ENEMY_H + 4));
+        }
+    }
+    for (i = 0u; i < COIN_COUNT; i++) {
+        if (old_coin_taken[i] != g_coins[i].taken) {
+            int16_t x = (int16_t)(g_coins[i].x * TILE - g_camera_x);
+            int16_t y = (int16_t)(HUD_H + g_coins[i].y * TILE);
+            render_region(x, y, TILE, TILE);
+        }
+    }
+    for (i = 0u; i < BLOCK_COUNT; i++) {
+        if (old_block_used[i] != g_block_used[i]) {
+            int16_t x = (int16_t)(g_blocks[i].x * TILE - g_camera_x);
+            int16_t y = (int16_t)(HUD_H + g_blocks[i].y * TILE);
+            render_region(x, y, TILE, TILE);
+        }
+    }
+    if (g_score != old_score) render_region(0, 7, 22, 7);
+    if (g_coins_total != old_coins) render_region(38, 7, 16, 7);
+    if (g_time_left != old_time) render_region(108, 7, 20, 7);
 }
 
 void app_wake(void)

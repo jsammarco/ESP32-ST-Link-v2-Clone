@@ -26,6 +26,15 @@
 #define STREAM_OP_RAW         2u
 #define STREAM_OP_RLE         3u
 
+/* Every display operation is independently framed.  The ESP32 is deliberately
+ * unaware of this inner framing and may split it across serial packets.  The
+ * desktop decoder can scan for this marker after a truncated SWD/UART read
+ * instead of treating a pixel byte as the next opcode and closing the viewer. */
+#define STREAM_RECORD_MAGIC_0 ((uint8_t)'R')
+#define STREAM_RECORD_MAGIC_1 ((uint8_t)'Z')
+#define STREAM_RECORD_MAGIC_2 ((uint8_t)'D')
+#define STREAM_RECORD_MAGIC_3 ((uint8_t)'3')
+
 static uint8_t g_screen_stream_ring[STREAM_RING_BYTES] __attribute__((aligned(4)));
 
 /* This token intentionally survives SYSRESETREQ. The ESP32 sets it before it
@@ -147,13 +156,35 @@ static uint8_t stream_header(uint8_t opcode, uint16_t x, uint16_t y,
     return stream_write(header, sizeof(header));
 }
 
+static uint8_t stream_record_header(uint8_t opcode, uint16_t x, uint16_t y,
+                                    uint16_t width, uint16_t height,
+                                    uint32_t payload_bytes)
+{
+    uint16_t command_bytes;
+    uint16_t inverse;
+    uint8_t record[8];
+    if (payload_bytes > 65530u) return 0u;
+    command_bytes = (uint16_t)(5u + payload_bytes);
+    inverse = (uint16_t)~command_bytes;
+    record[0] = STREAM_RECORD_MAGIC_0;
+    record[1] = STREAM_RECORD_MAGIC_1;
+    record[2] = STREAM_RECORD_MAGIC_2;
+    record[3] = STREAM_RECORD_MAGIC_3;
+    record[4] = (uint8_t)command_bytes;
+    record[5] = (uint8_t)(command_bytes >> 8);
+    record[6] = (uint8_t)inverse;
+    record[7] = (uint8_t)(inverse >> 8);
+    return (uint8_t)(stream_write(record, sizeof(record)) &&
+                     stream_header(opcode, x, y, width, height));
+}
+
 static void stream_fill(uint16_t x, uint16_t y, uint16_t width,
                         uint16_t height, uint16_t color)
 {
     if (!stream_active() || width == 0u || height == 0u) {
         return;
     }
-    if (stream_header(STREAM_OP_FILL, x, y, width, height)) {
+    if (stream_record_header(STREAM_OP_FILL, x, y, width, height, 2u)) {
         (void)stream_u16(color);
     }
 }
@@ -223,7 +254,8 @@ static void stream_image(const uint16_t *pixels, uint16_t x, uint16_t y,
     count = (uint32_t)width * height;
     runs = count_runs(pixels, count);
     opcode = (runs * 3u < count * 2u) ? STREAM_OP_RLE : STREAM_OP_RAW;
-    if (!stream_header(opcode, x, y, width, height)) {
+    if (!stream_record_header(opcode, x, y, width, height,
+                              opcode == STREAM_OP_RLE ? runs * 3u : count * 2u)) {
         return;
     }
     if (opcode == STREAM_OP_RLE) {
@@ -264,9 +296,23 @@ static void stream_scaled_row_2x(const uint16_t *pixels, uint16_t y,
                                  uint16_t width)
 {
     uint16_t column = 0u;
-    if (!stream_header(STREAM_OP_RLE, 0u, y, (uint16_t)(width * 2u), 1u)) {
+    uint16_t runs = 0u;
+    while (column < width) {
+        const uint16_t color = pixels[column];
+        uint16_t source_run = 1u;
+        while (column + source_run < width && pixels[column + source_run] == color &&
+               source_run < 127u) {
+            source_run++;
+        }
+        column = (uint16_t)(column + source_run);
+        runs++;
+    }
+    if (!stream_record_header(STREAM_OP_RLE, 0u, y,
+                              (uint16_t)(width * 2u), 1u,
+                              (uint32_t)runs * 3u)) {
         return;
     }
+    column = 0u;
     while (column < width && stream_active()) {
         const uint16_t color = pixels[column];
         uint16_t source_run = 1u;

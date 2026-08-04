@@ -48,6 +48,7 @@ NV_VALUE_LABELS = {
     7: "Tetris high score",
 }
 VAPE_EMPTY_TICKS = 340_000
+CONFIG_CONNECT_RETRIES = 5
 
 
 def configure_console() -> None:
@@ -259,17 +260,31 @@ def values(device: serial.Serial) -> int:
 
 def set_launcher_config(device: serial.Serial, key: int, value: int, description: str) -> int:
     print(f"Setting {description}...")
-    device.write(b"N" + struct.pack("<BI", key, value))
-    device.flush()
+    for attempt in range(CONFIG_CONNECT_RETRIES):
+        device.write(b"N" + struct.pack("<BI", key, value))
+        device.flush()
 
-    deadline = time.monotonic() + 45
-    while True:
-        response = read_line(device, deadline)
-        print(response)
-        if response == "DONE":
-            return 0
-        if response.startswith("ERR") or response.startswith("VERIFY_FAIL"):
-            raise RuntimeError(f"ESP32 could not set {description}: {response}")
+        deadline = time.monotonic() + 45
+        while True:
+            response = read_line(device, deadline)
+            print(response)
+            if response == "DONE":
+                return 0
+            if response == "ERR CONNECT" and attempt + 1 < CONFIG_CONNECT_RETRIES:
+                delay_seconds = 0.25 * (2**attempt)
+                print(
+                    "Target SWD is still returning after reset; "
+                    f"retrying configuration in {delay_seconds:.2f} seconds "
+                    f"({attempt + 2}/{CONFIG_CONNECT_RETRIES})..."
+                )
+                time.sleep(delay_seconds)
+                break
+            if response.startswith("ERR") or response.startswith("VERIFY_FAIL"):
+                raise RuntimeError(f"ESP32 could not set {description}: {response}")
+    raise RuntimeError(
+        f"ESP32 could not set {description}: target SWD did not reconnect after "
+        f"{CONFIG_CONNECT_RETRIES} attempts"
+    )
 
 
 def set_launcher_level(device: serial.Serial, percent: int) -> int:
@@ -301,7 +316,6 @@ def flash(device: serial.Serial, image_path: Path) -> int:
         raise RuntimeError(
             f"Image is {len(image):,} bytes; the safe application region is {MAX_APP_IMAGE_BYTES:,} bytes."
         )
-
     print(f"Sending {len(image):,} bytes to the ESP32...")
     device.write(b"F" + struct.pack("<I", len(image)))
     device.flush()

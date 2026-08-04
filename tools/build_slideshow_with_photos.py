@@ -17,6 +17,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from launcher_storage import COIL_OUTPUTS, flashed_image_bytes
+
 
 REPO_ROOT = Path(os.environ.get("RAZ_REPO_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 SLIDESHOW_DIR = REPO_ROOT / "RAZ Vape Apps" / "Slideshow"
@@ -31,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--photos", type=Path, nargs="+", required=True, metavar="PHOTO")
     parser.add_argument("--screen-stream", action="store_true", help="include the SWD screen mirror")
+    parser.add_argument("--coil-output", choices=COIL_OUTPUTS, default="pa5")
     return parser.parse_args()
 
 
@@ -86,9 +89,11 @@ def main() -> int:
     if not BUILD_SCRIPT.is_file():
         raise RuntimeError(f"Build script not found: {BUILD_SCRIPT}")
     sdk = find_vaporware_sdk()
-    output_name = CUSTOM_APP_NAME + ("-stream" if args.screen_stream else "")
+    coil_config = COIL_OUTPUTS[args.coil_output]
+    output_name = CUSTOM_APP_NAME + coil_config["suffix"] + ("-stream" if args.screen_stream else "")
 
     print(f"Building Slideshow with {len(photos)} selected photo(s)...")
+    print(f"Coil output: {coil_config['label']}")
     for index, photo in enumerate(photos, start=1):
         print(f"  {index}. {photo.name}")
 
@@ -105,6 +110,7 @@ def main() -> int:
             environment["VAPORWARE"] = str(sdk)
             environment["SLIDESHOW_PHOTOS"] = str(staging)
             environment["SLIDESHOW_APP_NAME"] = output_name
+            environment["RAZ_COIL_OUTPUT"] = coil_config["build_value"]
             if args.screen_stream:
                 environment["SCREEN_STREAMER"] = "1"
             result = subprocess.run(["cmd.exe", "/d", "/c", "build_slideshow.bat"], cwd=SLIDESHOW_DIR, env=environment)
@@ -120,9 +126,12 @@ def main() -> int:
     image = SLIDESHOW_DIR / "build" / f"{output_name}.bin"
     if not image.is_file():
         raise RuntimeError(f"Build completed without producing {image}")
-    if image.stat().st_size > 60 * 1024:
-        raise RuntimeError(f"Slideshow image is {image.stat().st_size:,} bytes; safe limit is 61,440 bytes.")
-    print(f"Built {image} ({image.stat().st_size:,} bytes).")
+    flashed_bytes = flashed_image_bytes(image.stat().st_size)
+    if flashed_bytes > 60 * 1024:
+        raise RuntimeError(
+            f"Slideshow image is {flashed_bytes:,} flash bytes; safe limit is 61,440 bytes."
+        )
+    print(f"Built {image} ({flashed_bytes:,} flash bytes).")
     return 0
 
 

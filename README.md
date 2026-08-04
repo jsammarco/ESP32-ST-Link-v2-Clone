@@ -103,10 +103,33 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\start_raz_manage
 
 Select the ESP32's COM port in the window. The GUI excludes `COM1` from its
 port list because that is normally the legacy motherboard serial port. It can
-test the SWD connection, create a named (or timestamped) backup, restore a
+test the SWD connection, choose the app's coil-output pin, create a named (or timestamped) backup, restore a
 selected backup, flash Launcher/Tetris/Pac-Man/Mario 1-1/Geometry Dash/Chrome Dino/Tower Stacker/Slideshow/Flappy or a custom `.bin`, and display the persisted
 internal-flash values. It runs the same `fast_flash.py` protocol as the
 command-line workflow and its log shows the exact ESP32 progress messages.
+
+### Manual coil-output selection
+
+The Manager does not try to infer the board revision from the installed
+firmware. Before flashing, choose **Coil output pin** from the physical PCB
+marking. The selection changes the coil driver compiled into a fresh app image:
+
+| Manager option | Compiled behavior | Intended hardware |
+|---|---|---|
+| PA5 - regular RAZ (tested) | PA5 is initialized LOW and used as the coil gate | Existing tested RAZ DC25000 devices |
+| PB8 - KRAZ XD0007 V0.6B/G1 | PB8 is initialized LOW and used as the coil gate | `XD0007_MB_V0.6B` and `XD0007_MB_V0.6G1` |
+| Disabled | Neither PA5 nor PB8 is configured or driven by the coil driver | UI/testing or an uncertain board |
+
+Remove the cartridge before changing profiles and verify the PCB label. The
+[RAZ-RE firmware notes](https://github.com/xbenkozx/RAZ-RE/tree/main/Firmware)
+document PB8 as the coil trigger on the two XD0007 revisions and warn that
+`YK656-XD0007-A-V1.8` has a different, undefined pinout. Do not choose PA5 or
+PB8 for YK656 until that board is electrically mapped; use **Disabled**.
+
+PB8 selection fixes the coil-output GPIO, but KRAZ remains experimental because
+its 80x160 display, inputs, battery sensing, and UART differ from the tested
+128x160 RAZ target. Custom `.bin` files cannot be remapped by the Manager; their
+coil pin is determined by the code that produced them.
 
 The **ESP32 operating mode** panel queries the current mode or persistently
 selects **SWD programmer** and **Wi-Fi runtime**. Programmer-idle leaves both CC
@@ -130,7 +153,18 @@ the title, selected photos, and optional screen streamer, then builds
 `launcher-custom.bin` before it backs up and flashes. The MCU has 64 KB total
 flash; application builds are limited to 60 KB so the final 4 KB remains
 reserved for saved values. The exact linked image size is checked again before
-flashing.
+flashing. The same panel also projects static RAM against a 6 KB limit, leaving
+the final 2 KB of the N32's 8 KB SRAM for its runtime stack. The Manager blocks
+unsafe bundles before backup or flashing. Doom's renderer and Slideshow's photo
+decoder are the largest RAM users; combining both with additional modules was
+the cause of the previously observed programmed-but-black Launcher.
+
+Mario 1-1, Geometry Dash, Chrome Dino, and Tower Stacker use differential
+rendering during normal play. Moving actors and HUD regions are recomposed into
+a shared four-row strip and sent as compact LCD updates. Full-screen redraws are
+reserved for startup, restart, camera-page changes, and other major scene
+transitions. The Manager always makes a fresh build for these four apps so it
+cannot accidentally flash an older full-redraw binary.
 
 When standalone **Slideshow** is selected, or Launcher includes a Slideshow
 slot, use **Choose up to 3 photos...** to select one to three `.bmp`, `.gif`,
@@ -177,6 +211,11 @@ but the N32G031 has only 8 KB of SRAM (including its stack). The optional target
 firmware therefore sends the exact LCD drawing commands through a 3 KB ring
 buffer; the 40,960-byte framebuffer lives on the PC. The ESP32 resets the app
 when a viewer connects so its reconstruction includes the complete first screen.
+Current stream builds wrap every display operation in a self-synchronizing
+record. If a byte is truncated during a large camera redraw, the viewer skips
+only the damaged operation and resumes at the next record instead of exiting
+with an unknown-display-command error. The viewer remains compatible with
+older unframed stream images.
 Attainable update rate depends on how much of the display changes and on SWD
 wiring quality. Screen-enabled Slideshow builds use smaller decode chunks so the
 stream and application remain inside the MCU's RAM limit.
@@ -199,16 +238,18 @@ The result is `dist\RAZ-ESP32-Manager.exe`. Keep the `dist` directory in this
 repository so the packaged Manager can find the app sources and build scripts;
 the screen viewer itself is embedded as an internal mode of that executable.
 
-### Launcher pre-flash options
+### Manager pre-flash options
 
+The coil-output selection is compiled into every fresh bundled-app build.
 When **Launcher** is selected, the GUI also presents settings that are applied
 after the image verifies. **Create a backup before flashing** is enabled by
-default. The Launcher-only options are deliberately bounded:
+default. The options are deliberately bounded:
 
 | Option | Default | Effect |
 |---|---|---|
+| Coil output pin | PA5 - regular RAZ (tested) | Selects PA5, PB8, or a no-GPIO disabled driver at build time. This applies to every bundled app; custom binaries retain their embedded pin. |
 | Remaining-use display | Preserve saved value | `100%` sets the Launcher's internal use tracker to zero. It changes only the displayed tracker; it does not recharge the battery or consumable. |
-| Coil profile | Current app default | Preserves the existing Normal (50% duty, 1.8 s cutoff) and Boost (continuous, 0.9 s cutoff) behavior. |
+| Launcher power profile | Preserve saved / app default | Performs no post-flash settings write. Choose Standard, Conservative, or Disabled only when an explicit saved override is wanted. |
 | Conservative coil profile | Not selected | Uses lower duty cycles and shorter cutoffs: Normal 33% / 1.5 s and Boost 50% / 0.7 s. |
 | Coil disabled | Not selected | Keeps the Launcher UI usable but prevents coil drive. |
 
@@ -293,7 +334,7 @@ interrupted operation can leave the target without valid application firmware.
 ## Back up and restore internal flash
 
 Back up a working device **before** experimenting with firmware. The backup
-tool halts the MCU briefly, reads all 64 KB of internal flash plus an 8 KB RAM
+tool halts the MCU briefly and reads all 64 KB of internal flash plus an 8 KB RAM
 snapshot, saves SHA-256 hashes in `manifest.json`, and then resumes the target.
 The default destination is a timestamped directory under `backups/`, which is
 ignored by Git because it can contain device-specific data.
@@ -332,9 +373,8 @@ flash image, verifies it, and requests a target reset only after success.
 
 You can also restore from `internal_flash.bin` by itself; the folder, RAM
 snapshot, and manifest are not required. The file must be an exact 65,536-byte
-full internal-flash image. The image is still verified by the ESP32 after it is
-written, but there is no pre-restore SHA-256 manifest check when the `.bin` is
-used alone:
+full internal-flash image. A standalone `.bin` has no pre-restore SHA-256
+manifest check, so verify that it came from the connected physical device:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\restore_raz.ps1 `
@@ -362,11 +402,10 @@ with standalone images remain available from the same Manager app list:
 | Pac-Man | Automatic assist | Follow unambiguous corners and reverse at dead ends |
 | Pac-Man | Hold about 2 seconds, then release | Return to menu |
 | Mario 1-1 | One short press | Toggle running forward on or off |
-| Mario 1-1 | Two short presses within 260 ms | Step backward two tiles, then resume the prior state |
+| Mario 1-1 | Two short presses within 260 ms | Step backward two tiles without scrolling to a completed screen |
 | Mario 1-1 | Hold 420 ms | Jump once |
 | Mario 1-1 | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
-| Geometry Dash | Press | Start or jump; a midair press activates a nearby yellow orb |
-| Geometry Dash | Hold | Chain another jump whenever the cube lands |
+| Geometry Dash | Press | Start; while running, reverse gravity between floor and ceiling |
 | Geometry Dash | Press after crashing | Start the next attempt |
 | Geometry Dash | Hold about 2 seconds, then release | Return to Launcher menu when bundled |
 | Chrome Dino | Press | Start, jump from the ground, or retry after a crash |
@@ -403,6 +442,7 @@ the per-bit USB serial round trips that make OpenOCD programming very slow.
 | `ERR PROBE` or no `IDR` response | Both GPIO mappings were tried. Verify GND, wake the target, and keep the CC wires short. |
 | `ERR MODE_RUNTIME` | Use **Enable SWD programmer** (or `--esp32-programmer`), reset the N32 while holding its button, then retry. |
 | `ERR NO_STREAM_APP` | Reflash Launcher, Tetris, Pac-Man, Mario 1-1, Geometry Dash, Chrome Dino, Tower Stacker, Flappy, or Slideshow with the full-resolution streamer checked, and upload the current ESP32 firmware. |
+| Viewer reports an unknown display command | Reflash the app to get self-synchronizing stream records and reopen the viewer from the current Manager executable. |
 | `VERIFY_FAIL` or `ERR FLASH` | Keep the wires short, retain both series resistors (1 kΩ for the combined POC), charge the device, and rerun the read-only probe before retrying. |
 | Screen does not return immediately after `DONE` | Verify the latest ESP32 firmware was uploaded, then power-cycle/reset the target before attempting another flash. |
 

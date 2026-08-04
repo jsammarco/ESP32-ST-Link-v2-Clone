@@ -725,7 +725,16 @@ void fast_flash_command() {
   }
 
   uint32_t dpidr = 0;
-  if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
+  bool connected = false;
+  for (uint8_t attempt = 0; attempt < 5U; ++attempt) {
+    if (fast_enable_debug(&dpidr) && fast_halt_target()) {
+      connected = true;
+      break;
+    }
+    release_target_pins();
+    delay(50U << attempt);
+  }
+  if (!connected) {
     Serial.println("ERR CONNECT");
     return;
   }
@@ -901,7 +910,16 @@ void fast_launcher_config_command() {
   }
 
   uint32_t dpidr = 0;
-  if (!fast_enable_debug(&dpidr) || !fast_halt_target()) {
+  bool connected = false;
+  for (uint8_t attempt = 0; attempt < 5U; ++attempt) {
+    if (fast_enable_debug(&dpidr) && fast_halt_target()) {
+      connected = true;
+      break;
+    }
+    release_target_pins();
+    delay(50U << attempt);
+  }
+  if (!connected) {
     Serial.println("ERR CONNECT");
     return;
   }

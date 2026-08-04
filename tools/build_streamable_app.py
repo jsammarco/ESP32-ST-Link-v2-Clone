@@ -9,30 +9,38 @@ import subprocess
 from pathlib import Path
 
 from build_slideshow_with_photos import find_vaporware_sdk
+from launcher_storage import COIL_OUTPUTS, flashed_image_bytes
 
 
 REPO_ROOT = Path(os.environ.get("RAZ_REPO_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 APP_CONFIG = {
-    "Tetris": ("Tetris", "build_tetris.bat", "TETRIS_APP_NAME", "tetris-stream"),
-    "Pac-Man": ("Pacman", "build_pacman.bat", "PACMAN_APP_NAME", "pacman-stream"),
-    "Mario 1-1": ("Mario", "build_mario.bat", "MARIO_APP_NAME", "mario-stream"),
-    "Geometry Dash": ("GeometryDash", "build_geometry_dash.bat", "GEOMETRY_DASH_APP_NAME", "geometry-dash-stream"),
-    "Chrome Dino": ("ChromeDino", "build_chrome_dino.bat", "CHROME_DINO_APP_NAME", "chrome-dino-stream"),
-    "Tower Stacker": ("TowerStacker", "build_tower_stacker.bat", "TOWER_STACKER_APP_NAME", "tower-stacker-stream"),
-    "Flappy": ("flappy", "build_flappy.bat", "FLAPPY_APP_NAME", "flappy-stream"),
-    "Slideshow": ("Slideshow", "build_slideshow.bat", "SLIDESHOW_APP_NAME", "slideshow-stream"),
+    "Tetris": ("Tetris", "build_tetris.bat", "TETRIS_APP_NAME", "tetris"),
+    "Pac-Man": ("Pacman", "build_pacman.bat", "PACMAN_APP_NAME", "pacman"),
+    "Mario 1-1": ("Mario", "build_mario.bat", "MARIO_APP_NAME", "mario"),
+    "Geometry Dash": ("GeometryDash", "build_geometry_dash.bat", "GEOMETRY_DASH_APP_NAME", "geometry-dash"),
+    "Chrome Dino": ("ChromeDino", "build_chrome_dino.bat", "CHROME_DINO_APP_NAME", "chrome-dino"),
+    "Tower Stacker": ("TowerStacker", "build_tower_stacker.bat", "TOWER_STACKER_APP_NAME", "tower-stacker"),
+    "Doom": ("Doom", "build_doom.bat", "DOOM_APP_NAME", "doom"),
+    "Flappy": ("flappy", "build_flappy.bat", "FLAPPY_APP_NAME", "flappy"),
+    "Slideshow": ("Slideshow", "build_slideshow.bat", "SLIDESHOW_APP_NAME", "slideshow"),
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, choices=APP_CONFIG)
+    parser.add_argument("--screen-stream", action="store_true", help="include the SWD screen mirror")
+    parser.add_argument("--coil-output", choices=COIL_OUTPUTS, default="pa5")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    directory_name, script_name, app_name_variable, output_name = APP_CONFIG[args.app]
+    if args.app == "Doom" and args.screen_stream:
+        raise RuntimeError("The standalone Doom build does not support the SWD screen streamer.")
+    directory_name, script_name, app_name_variable, base_name = APP_CONFIG[args.app]
+    coil_config = COIL_OUTPUTS[args.coil_output]
+    output_name = base_name + coil_config["suffix"] + ("-stream" if args.screen_stream else "")
     app_directory = REPO_ROOT / "RAZ Vape Apps" / directory_name
     build_script = app_directory / script_name
     output_image = app_directory / "build" / f"{output_name}.bin"
@@ -41,10 +49,13 @@ def main() -> int:
 
     environment = os.environ.copy()
     environment["VAPORWARE"] = str(find_vaporware_sdk())
-    environment["SCREEN_STREAMER"] = "1"
+    if args.screen_stream:
+        environment["SCREEN_STREAMER"] = "1"
+    environment["RAZ_COIL_OUTPUT"] = coil_config["build_value"]
     environment[app_name_variable] = output_name
 
-    print(f"Building stream-enabled {args.app}...")
+    stream_note = " with screen streaming" if args.screen_stream else ""
+    print(f"Building {args.app}{stream_note}; coil output: {coil_config['label']}...")
     result = subprocess.run(
         ["cmd.exe", "/d", "/c", script_name],
         cwd=app_directory,
@@ -54,11 +65,12 @@ def main() -> int:
         return result.returncode
     if not output_image.is_file():
         raise RuntimeError(f"Build completed without producing {output_image}")
-    if output_image.stat().st_size > 60 * 1024:
+    flashed_bytes = flashed_image_bytes(output_image.stat().st_size)
+    if flashed_bytes > 60 * 1024:
         raise RuntimeError(
-            f"Image is {output_image.stat().st_size:,} bytes; safe limit is 61,440 bytes."
+            f"Image is {flashed_bytes:,} flash bytes; safe limit is 61,440 bytes."
         )
-    print(f"Built {output_image} ({output_image.stat().st_size:,} bytes).")
+    print(f"Built {output_image} ({flashed_bytes:,} flash bytes).")
     return 0
 
 

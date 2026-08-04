@@ -13,9 +13,11 @@ narrower. A complete miss ends the run.
 | Any screen | Hold 10 seconds to reset the session best |
 
 Near-perfect placements snap into exact alignment and increase the `PERFECT`
-combo. The tower view climbs automatically, movement gets faster as the score
-rises, and falling overhangs, particles, skyline themes, and animated feedback
-make each placement readable on the 128×160 screen.
+combo. The tower view climbs automatically and movement gets faster as the
+score rises. The skyline uses a lightweight static silhouette, while all
+moving floors, falling overhangs, and particles are merged into one dirty LCD
+region per effect. A falling overhang is kept separate from the next moving
+floor so the empty vertical space between them is never repainted.
 
 The app is display-only and forces the coil output off at startup and every
 frame.

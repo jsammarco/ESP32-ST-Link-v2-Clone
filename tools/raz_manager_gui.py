@@ -22,15 +22,20 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from launcher_storage import (
     APP_SAFE_BYTES,
+    APP_RAM_SAFE_BYTES,
     BUNDLE_APPS as LAUNCHER_BUNDLE_APPS,
+    COIL_OUTPUTS,
     DEFAULT_LAUNCHER_TITLE,
     FLASH_TOTAL_BYTES,
     PHOTO_ASSET_BYTES,
     SETTINGS_RESERVED_BYTES,
+    STACK_RESERVED_BYTES,
     SLIDESHOW_COMMON_ESTIMATE_BYTES,
     STREAMER_ESTIMATE_BYTES,
     projected_launcher_bytes,
+    projected_launcher_ram_bytes,
     selected_image_bytes,
+    flashed_image_bytes,
     validate_launcher_title,
 )
 
@@ -71,23 +76,12 @@ APPS = {
     "Geometry Dash": REPO_ROOT / "RAZ Vape Apps" / "GeometryDash" / "build" / "geometry-dash.bin",
     "Chrome Dino": REPO_ROOT / "RAZ Vape Apps" / "ChromeDino" / "build" / "chrome-dino.bin",
     "Tower Stacker": REPO_ROOT / "RAZ Vape Apps" / "TowerStacker" / "build" / "tower-stacker.bin",
+    "Doom": REPO_ROOT / "RAZ Vape Apps" / "Doom" / "build" / "doom.bin",
     "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow.bin",
     "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy.bin",
 }
 SLIDESHOW_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos.bin"
 LAUNCHER_CUSTOM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-custom.bin"
-LAUNCHER_STREAM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Launcher" / "build" / "launcher-custom-stream.bin"
-SLIDESHOW_PHOTOS_STREAM_IMAGE = REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-photos-stream.bin"
-STREAM_IMAGES = {
-    "Tetris": REPO_ROOT / "RAZ Vape Apps" / "Tetris" / "build" / "tetris-stream.bin",
-    "Pac-Man": REPO_ROOT / "RAZ Vape Apps" / "Pacman" / "build" / "pacman-stream.bin",
-    "Mario 1-1": REPO_ROOT / "RAZ Vape Apps" / "Mario" / "build" / "mario-stream.bin",
-    "Geometry Dash": REPO_ROOT / "RAZ Vape Apps" / "GeometryDash" / "build" / "geometry-dash-stream.bin",
-    "Chrome Dino": REPO_ROOT / "RAZ Vape Apps" / "ChromeDino" / "build" / "chrome-dino-stream.bin",
-    "Tower Stacker": REPO_ROOT / "RAZ Vape Apps" / "TowerStacker" / "build" / "tower-stacker-stream.bin",
-    "Flappy": REPO_ROOT / "RAZ Vape Apps" / "flappy" / "build" / "flappy-stream.bin",
-    "Slideshow": REPO_ROOT / "RAZ Vape Apps" / "Slideshow" / "build" / "slideshow-stream.bin",
-}
 NV_LABELS = {
     0: "Puff count",
     1: "Total vape time",
@@ -109,11 +103,17 @@ LAUNCHER_LEVEL_OPTIONS: dict[str, int | None] = {
     "25%": 25,
     "0% (empty display)": 0,
 }
-COIL_PROFILE_OPTIONS = {
-    "Current app default": "default",
+COIL_PROFILE_OPTIONS: dict[str, str | None] = {
+    "Preserve saved / app default": None,
+    "Standard (default limits)": "default",
     "Conservative (reduced output)": "conservative",
     "Coil disabled (UI only)": "disabled",
 }
+COIL_OUTPUT_OPTIONS = {
+    config["label"]: output_id
+    for output_id, config in COIL_OUTPUTS.items()
+}
+FRESH_BUILD_APPS = {"Mario 1-1", "Geometry Dash", "Chrome Dino", "Tower Stacker"}
 
 
 def local_tool_command(tool: Path, arguments: list[str]) -> list[str]:
@@ -150,7 +150,8 @@ class RazManager(tk.Tk):
         self.backup_before_flash_var = tk.BooleanVar(value=True)
         self.screen_stream_var = tk.BooleanVar(value=False)
         self.launcher_level_var = tk.StringVar(value="Preserve saved value")
-        self.coil_profile_var = tk.StringVar(value="Current app default")
+        self.coil_profile_var = tk.StringVar(value="Preserve saved / app default")
+        self.coil_output_var = tk.StringVar(value=COIL_OUTPUTS["pa5"]["label"])
         self.launcher_title_var = tk.StringVar(value=DEFAULT_LAUNCHER_TITLE)
         self.launcher_app_vars = {
             app: tk.BooleanVar(value=app in {"Tetris", "Flappy"})
@@ -161,6 +162,7 @@ class RazManager(tk.Tk):
         self.custom_image_var = tk.StringVar(value="Launcher will be built with Tetris + Flappy.")
         self.storage_detail_var = tk.StringVar()
         self.storage_over_limit = False
+        self.ram_over_limit = False
         self.built_storage_bytes: int | None = None
         self.slideshow_photos: list[Path] = []
         self.slideshow_photo_var = tk.StringVar(
@@ -171,6 +173,7 @@ class RazManager(tk.Tk):
         self.action_widgets: list[tk.Widget] = []
 
         self._build_ui()
+        self.update_flash_lock()
         self.launcher_title_var.trace_add("write", self.on_launcher_title_changed)
         self.update_storage_bar()
         self.refresh_ports()
@@ -230,16 +233,16 @@ class RazManager(tk.Tk):
 
         read_frame = ttk.LabelFrame(main, text="Read only", padding=10)
         read_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(12, 0))
-        probe = ttk.Button(read_frame, text="Test connection", command=self.probe)
+        probe = ttk.Button(read_frame, text="Test SWD connection", command=self.probe)
         probe.grid(row=0, column=0, sticky="w")
         values = ttk.Button(read_frame, text="Get saved vape values", command=self.read_values)
         values.grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.action_widgets.extend([probe, values])
         ttk.Label(
             read_frame,
-            text=("Values read the internal-flash NV keys used by the bundled apps. "
-                  "Launcher stores heater-use ticks, not a discrete puff count."),
-            wraplength=650,
+            text=("These actions read the SWD connection or bundled-app saved values. "
+                  "They do not select or probe a coil pin."),
+            wraplength=740,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         write_frame = ttk.LabelFrame(main, text="Backup, restore, and app flash", padding=10)
@@ -247,7 +250,8 @@ class RazManager(tk.Tk):
         write_frame.columnconfigure(1, weight=1)
         flash_tip = tk.Label(
             write_frame,
-            text=("PROGRAMMING TIP: After confirming Flash, hold the vape's physical button. "
+            text=("SAFETY: Select the correct coil-output pin from the physical board marking. "
+                  "Remove the cartridge when changing profiles. After confirming Flash, hold the vape's physical button. "
                   "Keep holding until the operation log shows ERASE 1/...; then release. "
                   "If automatic backup is enabled, it runs before erasing starts."),
             anchor="w",
@@ -278,9 +282,9 @@ class RazManager(tk.Tk):
         app_box = ttk.Combobox(write_frame, textvariable=self.app_var, values=[*APPS, CUSTOM_APP], state="readonly", width=20)
         app_box.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(12, 0))
         app_box.bind("<<ComboboxSelected>>", self.on_app_selected)
-        flash = ttk.Button(write_frame, text="Flash selected app...", command=self.flash_app)
-        flash.grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(12, 0))
-        self.action_widgets.extend([app_box, flash])
+        self.flash_button = ttk.Button(write_frame, text="Flash selected app...", command=self.flash_app)
+        self.flash_button.grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(12, 0))
+        self.action_widgets.extend([app_box, self.flash_button])
         ttk.Label(write_frame, textvariable=self.custom_image_var, foreground="#444444", wraplength=610).grid(
             row=4, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(3, 0)
         )
@@ -376,7 +380,19 @@ class RazManager(tk.Tk):
         self.open_stream_button.grid(row=11, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.screen_stream_check, self.open_stream_button])
 
-        ttk.Label(write_frame, text="Launcher level:").grid(row=12, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(write_frame, text="Coil output pin:").grid(row=12, column=0, sticky="w", pady=(10, 0))
+        self.coil_output_box = ttk.Combobox(
+            write_frame,
+            textvariable=self.coil_output_var,
+            values=list(COIL_OUTPUT_OPTIONS),
+            state="readonly",
+            width=40,
+        )
+        self.coil_output_box.grid(row=12, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.coil_output_box.bind("<<ComboboxSelected>>", self.on_coil_output_changed)
+        self.action_widgets.append(self.coil_output_box)
+
+        ttk.Label(write_frame, text="Launcher level:").grid(row=13, column=0, sticky="w", pady=(10, 0))
         self.launcher_level_box = ttk.Combobox(
             write_frame,
             textvariable=self.launcher_level_var,
@@ -384,9 +400,9 @@ class RazManager(tk.Tk):
             state="readonly",
             width=25,
         )
-        self.launcher_level_box.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.launcher_level_box.grid(row=13, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
 
-        ttk.Label(write_frame, text="Coil profile:").grid(row=13, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(write_frame, text="Launcher power profile:").grid(row=14, column=0, sticky="w", pady=(6, 0))
         self.coil_profile_box = ttk.Combobox(
             write_frame,
             textvariable=self.coil_profile_var,
@@ -394,7 +410,7 @@ class RazManager(tk.Tk):
             state="readonly",
             width=29,
         )
-        self.coil_profile_box.grid(row=13, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.coil_profile_box.grid(row=14, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
         self.action_widgets.extend([self.launcher_level_box, self.coil_profile_box])
         ttk.Label(
             write_frame,
@@ -402,13 +418,13 @@ class RazManager(tk.Tk):
                   "the battery or consumable. No profile increases the current app's output or cutoff."),
             foreground="#444444",
             wraplength=650,
-        ).grid(row=14, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
+        ).grid(row=15, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(4, 0))
         ttk.Label(
             write_frame,
             text="Always create a backup before flashing or restoring. Restore overwrites all internal flash and saved settings.",
             foreground="#7a3000",
             wraplength=650,
-        ).grid(row=15, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ).grid(row=16, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         values_frame = ttk.LabelFrame(main, text="Saved values", padding=10)
         values_frame.grid(row=6, column=0, columnspan=4, sticky="new", pady=(12, 0))
@@ -455,6 +471,11 @@ class RazManager(tk.Tk):
         if selection == CUSTOM_APP:
             self.screen_stream_var.set(False)
             self.choose_custom_image()
+        elif selection == "Doom":
+            # Doom can be rebuilt for any coil output, but its standalone
+            # build does not yet contain the optional SWD display wrapper.
+            self.screen_stream_var.set(False)
+            self.custom_image_var.set(f"Bundled image: {APPS[selection]}")
         elif selection == "Launcher":
             self.update_launcher_bundle_summary()
         else:
@@ -465,6 +486,14 @@ class RazManager(tk.Tk):
 
     def selected_launcher_apps(self) -> list[str]:
         return [app for app in LAUNCHER_BUNDLE_APPS if self.launcher_app_vars[app].get()]
+
+    def selected_coil_output(self) -> str:
+        return COIL_OUTPUT_OPTIONS.get(self.coil_output_var.get(), "pa5")
+
+    def configured_image_path(self, base_image: Path, *, screen_stream: bool = False) -> Path:
+        suffix = COIL_OUTPUTS[self.selected_coil_output()]["suffix"]
+        stream_suffix = "-stream" if screen_stream else ""
+        return base_image.with_name(f"{base_image.stem}{suffix}{stream_suffix}.bin")
 
     def bundled_slideshow_photo_count(self) -> int:
         if self.slideshow_photos:
@@ -482,7 +511,11 @@ class RazManager(tk.Tk):
         if selection == CUSTOM_APP:
             if self.custom_image_path is None or not self.custom_image_path.is_file():
                 return 0, False, "Choose a custom image to measure it"
-            return self.custom_image_path.stat().st_size, True, "Exact custom image"
+            return (
+                flashed_image_bytes(self.custom_image_path.stat().st_size),
+                True,
+                "Exact custom image",
+            )
         if selection == "Launcher":
             apps = self.selected_launcher_apps()
             if not apps:
@@ -501,14 +534,24 @@ class RazManager(tk.Tk):
                 "Projected Launcher build",
             )
         if selection == "Slideshow" and self.slideshow_photos:
-            size = SLIDESHOW_COMMON_ESTIMATE_BYTES + len(self.slideshow_photos) * PHOTO_ASSET_BYTES
+            unmarked_size = (
+                SLIDESHOW_COMMON_ESTIMATE_BYTES
+                + len(self.slideshow_photos) * PHOTO_ASSET_BYTES
+            )
             if screen_stream:
-                size += STREAMER_ESTIMATE_BYTES
-            return size, False, "Projected custom Slideshow build"
+                unmarked_size += STREAMER_ESTIMATE_BYTES
+            return flashed_image_bytes(unmarked_size), False, "Projected custom Slideshow build"
         normal = APPS.get(selection)
         if normal is None:
             return 0, False, "No image selected"
-        size, exact = selected_image_bytes(normal, STREAM_IMAGES.get(selection), screen_stream)
+        configured = self.configured_image_path(normal, screen_stream=screen_stream)
+        force_build = self.selected_coil_output() != "pa5" or selection in FRESH_BUILD_APPS
+        if force_build:
+            if configured.is_file():
+                return flashed_image_bytes(configured.stat().st_size), True, "Exact configured build"
+            size, _exact = selected_image_bytes(normal, None, False)
+            return size, False, "Projected configured build"
+        size, exact = selected_image_bytes(normal, configured if screen_stream else None, screen_stream)
         return size, exact, "Exact built image" if exact else "Projected image"
 
     def update_storage_bar(self) -> None:
@@ -516,11 +559,23 @@ class RazManager(tk.Tk):
             return
         used, exact, source = self.current_storage_usage()
         self.storage_over_limit = used > APP_SAFE_BYTES
+        ram_detail = ""
+        self.ram_over_limit = False
+        if self.app_var.get() == "Launcher" and self.selected_launcher_apps():
+            ram_used = projected_launcher_ram_bytes(
+                self.selected_launcher_apps(),
+                screen_stream=self.screen_stream_var.get(),
+            )
+            self.ram_over_limit = ram_used > APP_RAM_SAFE_BYTES
+            ram_detail = (
+                f" Projected static RAM: {ram_used:,} / {APP_RAM_SAFE_BYTES:,} bytes; "
+                f"{STACK_RESERVED_BYTES:,} bytes kept for the stack."
+            )
         width = max(self.storage_canvas.winfo_width(), 520)
         height = 24
         safe_x = int(width * APP_SAFE_BYTES / FLASH_TOTAL_BYTES)
         used_x = min(width, int(width * used / FLASH_TOTAL_BYTES)) if used else 0
-        if self.storage_over_limit:
+        if self.storage_over_limit or self.ram_over_limit:
             fill = "#d64545"
         elif used >= int(APP_SAFE_BYTES * 0.8):
             fill = "#e5a72b"
@@ -533,12 +588,17 @@ class RazManager(tk.Tk):
         if used_x:
             self.storage_canvas.create_rectangle(0, 0, used_x, height, fill=fill, outline="")
         self.storage_canvas.create_line(safe_x, 0, safe_x, height, fill="#765d20", width=2)
-        status = "OVER SAFE LIMIT" if self.storage_over_limit else f"{used / 1024:.1f} KB used"
+        if self.storage_over_limit:
+            status = "FLASH LIMIT EXCEEDED"
+        elif self.ram_over_limit:
+            status = "RAM LIMIT EXCEEDED"
+        else:
+            status = f"{used / 1024:.1f} KB flash used"
         self.storage_canvas.create_text(
             width // 2,
             height // 2,
             text=status,
-            fill="#ffffff" if used_x > width // 2 or self.storage_over_limit else "#243247",
+            fill="#ffffff" if used_x > width // 2 or self.storage_over_limit or self.ram_over_limit else "#243247",
             font=("Segoe UI", 9, "bold"),
         )
         accuracy = "exact" if exact else "estimate"
@@ -554,7 +614,9 @@ class RazManager(tk.Tk):
                 f"{source} ({accuracy}): {used:,} bytes, {abs(remaining):,} over the safe app limit. "
                 "Deselect apps/photos or disable streaming."
             )
-        self.storage_detail_var.set(detail)
+        if self.ram_over_limit:
+            ram_detail += " RAM LIMIT EXCEEDED — remove apps or disable streaming."
+        self.storage_detail_var.set(detail + ram_detail)
 
     def update_launcher_bundle_summary(self) -> None:
         apps = self.selected_launcher_apps()
@@ -579,6 +641,10 @@ class RazManager(tk.Tk):
         self.built_storage_bytes = None
         self.update_storage_bar()
 
+    def on_coil_output_changed(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        self.built_storage_bytes = None
+        self.update_storage_bar()
+
     def update_launcher_options(self) -> None:
         launcher_state = "normal" if self.app_var.get() == "Launcher" and self.process is None else "disabled"
         for check in self.launcher_app_checks.values():
@@ -587,7 +653,13 @@ class RazManager(tk.Tk):
         combo_state = "readonly" if launcher_state == "normal" else "disabled"
         self.launcher_level_box.configure(state=combo_state)
         self.coil_profile_box.configure(state=combo_state)
-        stream_state = "normal" if self.app_var.get() != CUSTOM_APP and self.process is None else "disabled"
+        coil_output_state = "readonly" if self.app_var.get() != CUSTOM_APP and self.process is None else "disabled"
+        self.coil_output_box.configure(state=coil_output_state)
+        stream_state = (
+            "normal"
+            if self.app_var.get() not in {CUSTOM_APP, "Doom"} and self.process is None
+            else "disabled"
+        )
         self.screen_stream_check.configure(state=stream_state)
 
     def update_slideshow_photo_options(self) -> None:
@@ -715,6 +787,16 @@ class RazManager(tk.Tk):
             self.update_launcher_options()
             self.update_slideshow_photo_options()
             self.update_storage_bar()
+            self.update_flash_lock()
+        elif hasattr(self, "flash_button"):
+            self.flash_button.configure(state="disabled")
+
+    def update_flash_lock(self) -> None:
+        if not hasattr(self, "flash_button"):
+            return
+        state = "normal" if self.process is None else "disabled"
+        self.flash_button.configure(text="Flash selected app...")
+        self.flash_button.configure(state=state)
 
     def run_tool(self, action: str, arguments: list[str]) -> None:
         port = self.selected_port()
@@ -1037,6 +1119,8 @@ class RazManager(tk.Tk):
         if self.selected_port() is None or self.process is not None:
             return
         selection = self.app_var.get()
+        coil_output = self.selected_coil_output()
+        coil_config = COIL_OUTPUTS[coil_output]
         launcher_apps: list[str] = []
         launcher_title = DEFAULT_LAUNCHER_TITLE
         if selection == "Launcher":
@@ -1064,11 +1148,11 @@ class RazManager(tk.Tk):
             if image_path is None:
                 return
         elif selection == "Launcher":
-            image_path = LAUNCHER_STREAM_IMAGE if stream_enabled else LAUNCHER_CUSTOM_IMAGE
+            image_path = self.configured_image_path(LAUNCHER_CUSTOM_IMAGE, screen_stream=stream_enabled)
         elif building_selected_photos:
-            image_path = SLIDESHOW_PHOTOS_STREAM_IMAGE if stream_enabled else SLIDESHOW_CUSTOM_IMAGE
-        elif stream_enabled:
-            image_path = STREAM_IMAGES[selection]
+            image_path = self.configured_image_path(SLIDESHOW_CUSTOM_IMAGE, screen_stream=stream_enabled)
+        elif stream_enabled or coil_output != "pa5" or selection in FRESH_BUILD_APPS:
+            image_path = self.configured_image_path(APPS[selection], screen_stream=stream_enabled)
         else:
             image_path = APPS[selection]
         storage_bytes, storage_exact, storage_source = self.current_storage_usage()
@@ -1080,7 +1164,28 @@ class RazManager(tk.Tk):
                 "Deselect Launcher apps/photos or disable the screen streamer before flashing.",
             )
             return
-        building_fresh_image = selection == "Launcher" or building_selected_photos or stream_enabled
+        if selection == "Launcher":
+            projected_ram = projected_launcher_ram_bytes(
+                launcher_apps,
+                screen_stream=stream_enabled,
+            )
+            if projected_ram > APP_RAM_SAFE_BYTES:
+                messagebox.showerror(
+                    "Launcher exceeds safe RAM",
+                    f"This bundle is projected to use {projected_ram:,} bytes of static RAM, "
+                    f"over the {APP_RAM_SAFE_BYTES:,}-byte limit. The remaining "
+                    f"{STACK_RESERVED_BYTES:,} bytes must stay available for the runtime stack.\n\n"
+                    "Doom and Slideshow are the largest RAM users. Remove one of them, "
+                    "remove other apps, or disable screen streaming before flashing.",
+                )
+                return
+        building_fresh_image = (
+            selection == "Launcher"
+            or building_selected_photos
+            or stream_enabled
+            or (selection != CUSTOM_APP and coil_output != "pa5")
+            or selection in FRESH_BUILD_APPS
+        )
         if not image_path.is_file() and not building_fresh_image:
             messagebox.showerror("Image not found", f"Cannot find:\n{image_path}\n\nBuild or copy the app image first.")
             return
@@ -1096,7 +1201,7 @@ class RazManager(tk.Tk):
                 return
             command = local_tool_command(
                 build_tool,
-                ["--title", launcher_title, "--apps", *launcher_apps],
+                ["--title", launcher_title, "--coil-output", coil_output, "--apps", *launcher_apps],
             )
             if building_selected_photos:
                 command.extend(["--photos", *(str(photo) for photo in self.slideshow_photos)])
@@ -1135,24 +1240,36 @@ class RazManager(tk.Tk):
                         [
                             "--photos",
                             *(str(photo) for photo in self.slideshow_photos),
+                            "--coil-output",
+                            coil_output,
                             *(["--screen-stream"] if stream_enabled else []),
                         ],
                     ),
                     False,
                 )
             )
-        elif stream_enabled:
+        elif stream_enabled or coil_output != "pa5" or selection in FRESH_BUILD_APPS:
             if not local_tool_available(STREAM_BUILD_TOOL):
-                messagebox.showerror("Missing stream-enabled app builder", f"Cannot find:\n{STREAM_BUILD_TOOL}")
+                messagebox.showerror("Missing configured app builder", f"Cannot find:\n{STREAM_BUILD_TOOL}")
                 return
             build_note = (
-                f"\nA fresh stream-enabled {selection} image will be built before flashing.\n"
-                "The viewer reconstructs the native 128×160 RGB565 display stream.\n"
+                f"\nA fresh {selection} image for {coil_config['label']} will be built before flashing.\n"
             )
+            if stream_enabled:
+                build_note += "It includes the native 128×160 RGB565 display stream.\n"
             pre_flash_steps.append(
                 (
-                    f"Build stream-enabled {selection}",
-                    local_tool_command(STREAM_BUILD_TOOL, ["--app", selection]),
+                    f"Build configured {selection}",
+                    local_tool_command(
+                        STREAM_BUILD_TOOL,
+                        [
+                            "--app",
+                            selection,
+                            "--coil-output",
+                            coil_output,
+                            *(["--screen-stream"] if stream_enabled else []),
+                        ],
+                    ),
                     False,
                 )
             )
@@ -1167,7 +1284,10 @@ class RazManager(tk.Tk):
                     )
                 )
             profile = COIL_PROFILE_OPTIONS[self.coil_profile_var.get()]
-            post_flash_steps.append((f"Set Launcher coil profile to {profile}", ["--set-coil-profile", profile], True))
+            if profile is not None:
+                post_flash_steps.append(
+                    (f"Set Launcher coil profile to {profile}", ["--set-coil-profile", profile], True)
+                )
 
         backup_note = "A backup will be created before the vape is erased.\n\n" if self.backup_before_flash_var.get() else ""
         config_note = ""
@@ -1178,6 +1298,10 @@ class RazManager(tk.Tk):
                 f"\nLauncher level: {self.launcher_level_var.get()}\n"
                 f"Coil profile: {self.coil_profile_var.get()}\n"
             )
+        if selection == CUSTOM_APP:
+            config_note += "\nCoil output: embedded in the custom binary; the Manager cannot remap it.\n"
+        else:
+            config_note += f"\nCoil output: {coil_config['label']}\n{coil_config['note']}\n"
         if stream_enabled:
             config_note += "\nSWD screen streamer: included\n"
         storage_kind = "Exact" if storage_exact else "Projected"

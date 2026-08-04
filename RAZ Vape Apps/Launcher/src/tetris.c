@@ -477,7 +477,7 @@ static uint8_t take_from_bag(void)
 static void set_coil(uint8_t on)
 {
     /* Re-evaluate the safety gate for the entire draw, not just its first
-     * frame, so a newly detected low-battery condition shuts PA5 off. */
+     * frame, so a newly detected low-battery condition shuts the selected coil output off. */
     if (on && TETRIS_COIL_ALLOWED()) {
         if (!g_coil_commanded) {
             TETRIS_COIL_ON();

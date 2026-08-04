@@ -23,11 +23,10 @@ before flashing. Its Launcher title box sets the heading (default
 | Pac-Man | Hold 450 ms | Reverse direction |
 | Pac-Man | Hold 2 s, then release | Return to menu |
 | Mario 1-1 | One short press | Toggle running forward on or off |
-| Mario 1-1 | Two short presses within 260 ms | Step backward two tiles |
+| Mario 1-1 | Two short presses within 260 ms | Step backward two tiles without scrolling to a completed screen |
 | Mario 1-1 | Hold 420 ms | Jump once |
 | Mario 1-1 | Hold 2 s, then release | Return to menu |
-| Geometry Dash | Press | Start or jump; activate a nearby orb in midair |
-| Geometry Dash | Hold | Chain another jump whenever the cube lands |
+| Geometry Dash | Press | Start; while running, reverse gravity between floor and ceiling |
 | Geometry Dash | Hold 2 s, then release | Return to menu |
 | Chrome Dino | Press | Start, jump from the ground, or retry |
 | Chrome Dino | Hold 2 s, then release | Return to menu |
@@ -144,9 +143,9 @@ configuration, image data, and build output are ignored by Git.
 
 For a one-off image, check any number of apps in the desktop GUI. If Slideshow
 is selected, **Choose up to 3 photos...** can replace its embedded images. The
-storage bar projects the combined code, photos, and optional screen streamer
-against the 60 KB application region; the remaining 4 KB is reserved for saved
-values. The GUI verifies the exact linked size and builds
+storage panel projects the combined code, photos, optional screen streamer, and
+static RAM. It preserves the 60 KB application region, 4 KB saved-value region,
+and a 2 KB runtime stack. The GUI verifies the exact linked size and builds
 `build\launcher-custom.bin` separately, so `launcher.bin` is not replaced.
 
 For a direct command-line build with more than two modules, pass quoted app

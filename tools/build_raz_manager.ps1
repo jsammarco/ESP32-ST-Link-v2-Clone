@@ -1,3 +1,7 @@
+param(
+    [string]$Name = 'RAZ-ESP32-Manager'
+)
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -9,7 +13,7 @@ if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
 }
 
 & pyinstaller --noconfirm --clean --onefile --console --hide-console hide-early `
-    --name 'RAZ-ESP32-Manager' `
+    --name $Name `
     --paths $PSScriptRoot `
     --distpath $outputRoot `
     --workpath (Join-Path $repoRoot 'build\pyinstaller') `
@@ -20,4 +24,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "Built: $(Join-Path $outputRoot 'RAZ-ESP32-Manager.exe')"
+Write-Host "Built: $(Join-Path $outputRoot ($Name + '.exe'))"

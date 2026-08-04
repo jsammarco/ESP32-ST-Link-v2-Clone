@@ -1012,7 +1012,7 @@ void app_update(uint32_t frame)
     battery_ui_change = battery_update(ms_now());
     if (g_battery_low && g_active_app != APP_MENU) {
         /* Leave any active game/slideshow immediately so the locked state is
-         * visible; the global coil interlock already switched PA5 LOW. */
+         * visible; the global coil interlock already switched the selected output LOW. */
         enter_menu();
         return;
     }

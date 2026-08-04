@@ -52,6 +52,8 @@ Discarded input sections
  .text          0x00000000        0x0 build\app.o
  .data          0x00000000        0x0 build\app.o
  .bss           0x00000000        0x0 build\app.o
+ .text.app_mark_activity
+                0x00000000       0x14 build\app.o
  .text.app_wake
                 0x00000000        0x2 build\app.o
  .text          0x00000000        0x0 build\flappy.o
@@ -99,7 +101,7 @@ LOAD build\flappy.o
                 0x08000000                _vectors
                 0x080000b4                        . = ALIGN (0x4)
 
-.text           0x080000b4     0x267c
+.text           0x080000b4     0x2688
                 0x080000b4                        . = ALIGN (0x4)
  *(.text)
  .text          0x080000b4      0x114 C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/../lib/gcc/arm-none-eabi/14.2.1/thumb/v6-m/nofp\libgcc.a(_udivsi3.o)
@@ -199,116 +201,116 @@ LOAD build\flappy.o
                 0x08000fe8       0x10 build\button.o
                 0x08000fe8                button_raw
  .text.bat_init
-                0x08000ff8       0x68 build\battery.o
+                0x08000ff8       0x70 build\battery.o
                 0x08000ff8                bat_init
  .text.bat_read_raw
-                0x08001060       0x6c build\battery.o
-                0x08001060                bat_read_raw
+                0x08001068       0x6c build\battery.o
+                0x08001068                bat_read_raw
  .text.flash_wait
-                0x080010cc       0x28 build\nv.o
+                0x080010d4       0x28 build\nv.o
  .text.flash_erase_page
-                0x080010f4       0x28 build\nv.o
+                0x080010fc       0x28 build\nv.o
  .text.flash_unlock
-                0x0800111c       0x20 build\nv.o
- .text.nv_read  0x0800113c       0x40 build\nv.o
-                0x0800113c                nv_read
+                0x08001124       0x20 build\nv.o
+ .text.nv_read  0x08001144       0x40 build\nv.o
+                0x08001144                nv_read
  .text.nv_write
-                0x0800117c       0x7c build\nv.o
-                0x0800117c                nv_write
+                0x08001184       0x7c build\nv.o
+                0x08001184                nv_write
  .text.app_set_sleep_timeout
-                0x080011f8        0xc build\app.o
-                0x080011f8                app_set_sleep_timeout
+                0x08001200        0xc build\app.o
+                0x08001200                app_set_sleep_timeout
  .text.app_set_hold_reset
-                0x08001204       0x14 build\app.o
-                0x08001204                app_set_hold_reset
+                0x0800120c       0x14 build\app.o
+                0x0800120c                app_set_hold_reset
  .text.startup.main
-                0x08001218      0x264 build\app.o
-                0x08001218                main
+                0x08001220      0x268 build\app.o
+                0x08001220                main
  .text.pipe_reset
-                0x0800147c       0x3c build\flappy.o
+                0x08001488       0x3c build\flappy.o
  .text.strip_fill_sky
-                0x080014b8       0x3c build\flappy.o
+                0x080014c4       0x3c build\flappy.o
  .text.strip_fill_pipe
-                0x080014f4       0x94 build\flappy.o
+                0x08001500       0x94 build\flappy.o
  .text.draw_bat
-                0x08001588       0xd0 build\flappy.o
+                0x08001594       0xd0 build\flappy.o
  .text.bird_render
-                0x08001658       0x44 build\flappy.o
+                0x08001664       0x44 build\flappy.o
  .text.send_strip
-                0x0800169c       0x18 build\flappy.o
+                0x080016a8       0x18 build\flappy.o
  .text.draw_glyph.constprop.0
-                0x080016b4       0x4e build\flappy.o
- *fill*         0x08001702        0x2 
+                0x080016c0       0x4e build\flappy.o
+ *fill*         0x0800170e        0x2 
  .text.draw_score_at.constprop.0
-                0x08001704       0xa0 build\flappy.o
+                0x08001710       0xa0 build\flappy.o
  .text.draw_death_overlay
-                0x080017a4      0x1cc build\flappy.o
+                0x080017b0      0x1cc build\flappy.o
  .text.draw_waiting_hint
-                0x08001970       0xd4 build\flappy.o
+                0x0800197c       0xd4 build\flappy.o
  .text.scene_draw
-                0x08001a44      0x110 build\flappy.o
+                0x08001a50      0x110 build\flappy.o
  .text.game_init_state
-                0x08001b54       0xcc build\flappy.o
+                0x08001b60       0xcc build\flappy.o
  .text.on_hard_reset
-                0x08001c20       0x2c build\flappy.o
+                0x08001c2c       0x2c build\flappy.o
  .text.app_init
-                0x08001c4c       0x54 build\flappy.o
-                0x08001c4c                app_init
+                0x08001c58       0x54 build\flappy.o
+                0x08001c58                app_init
  .text.app_update
-                0x08001ca0      0x468 build\flappy.o
-                0x08001ca0                app_update
+                0x08001cac      0x468 build\flappy.o
+                0x08001cac                app_update
  .text.app_wake
-                0x08002108       0x60 build\flappy.o
-                0x08002108                app_wake
+                0x08002114       0x60 build\flappy.o
+                0x08002114                app_wake
  *(.rodata)
  *(.rodata*)
  .rodata.g_letters2
-                0x08002168       0x2d build\flappy.o
+                0x08002174       0x2d build\flappy.o
  .rodata.g_letters
-                0x08002195       0x1e build\flappy.o
+                0x080021a1       0x1e build\flappy.o
  .rodata.g_digits
-                0x080021b3       0x32 build\flappy.o
+                0x080021bf       0x32 build\flappy.o
  .rodata.g_bldg
-                0x080021e5       0x80 build\flappy.o
- *fill*         0x08002265        0x1 
+                0x080021f1       0x80 build\flappy.o
+ *fill*         0x08002271        0x1 
  .rodata.spr_bird_dn
-                0x08002266      0x198 build\flappy.o
+                0x08002272      0x198 build\flappy.o
  .rodata.spr_bird_up
-                0x080023fe      0x198 build\flappy.o
+                0x0800240a      0x198 build\flappy.o
  .rodata.spr_bird_mid
-                0x08002596      0x198 build\flappy.o
-                0x08002730                        . = ALIGN (0x4)
- *fill*         0x0800272e        0x2 
-                0x08002730                        _etext = .
+                0x080025a2      0x198 build\flappy.o
+                0x0800273c                        . = ALIGN (0x4)
+ *fill*         0x0800273a        0x2 
+                0x0800273c                        _etext = .
 
-.glue_7         0x08002730        0x0
- .glue_7        0x08002730        0x0 linker stubs
+.glue_7         0x0800273c        0x0
+ .glue_7        0x0800273c        0x0 linker stubs
 
-.glue_7t        0x08002730        0x0
- .glue_7t       0x08002730        0x0 linker stubs
+.glue_7t        0x0800273c        0x0
+ .glue_7t       0x0800273c        0x0 linker stubs
 
-.vfp11_veneer   0x08002730        0x0
- .vfp11_veneer  0x08002730        0x0 linker stubs
+.vfp11_veneer   0x0800273c        0x0
+ .vfp11_veneer  0x0800273c        0x0 linker stubs
 
-.v4_bx          0x08002730        0x0
- .v4_bx         0x08002730        0x0 linker stubs
+.v4_bx          0x0800273c        0x0
+ .v4_bx         0x0800273c        0x0 linker stubs
 
-.iplt           0x08002730        0x0
- .iplt          0x08002730        0x0 build\startup.o
+.iplt           0x0800273c        0x0
+ .iplt          0x0800273c        0x0 build\startup.o
 
-.rel.dyn        0x08002730        0x0
- .rel.iplt      0x08002730        0x0 build\startup.o
+.rel.dyn        0x0800273c        0x0
+ .rel.iplt      0x0800273c        0x0 build\startup.o
 
-.sprites        0x08002730        0x0
-                0x08002730                        . = ALIGN (0x4)
-                0x08002730                        _sprites_start = .
+.sprites        0x0800273c        0x0
+                0x0800273c                        . = ALIGN (0x4)
+                0x0800273c                        _sprites_start = .
  *(.sprites)
  *(.sprites*)
-                0x08002730                        . = ALIGN (0x4)
-                0x08002730                        _sprites_end = .
-                0x08002730                        _sidata = LOADADDR (.data)
+                0x0800273c                        . = ALIGN (0x4)
+                0x0800273c                        _sprites_end = .
+                0x0800273c                        _sidata = LOADADDR (.data)
 
-.data           0x20000000        0x8 load address 0x08002730
+.data           0x20000000        0x8 load address 0x0800273c
                 0x20000000                        . = ALIGN (0x4)
                 0x20000000                        _sdata = .
  *(.data)
@@ -320,10 +322,10 @@ LOAD build\flappy.o
  *fill*         0x20000006        0x2 
                 0x20000008                        _edata = .
 
-.igot.plt       0x20000008        0x0 load address 0x08002738
+.igot.plt       0x20000008        0x0 load address 0x08002744
  .igot.plt      0x20000008        0x0 build\startup.o
 
-.bss            0x20000008      0x160 load address 0x08002738
+.bss            0x20000008      0x160 load address 0x08002744
                 0x20000008                        . = ALIGN (0x4)
                 0x20000008                        _sbss = .
  *(.bss)
@@ -387,7 +389,7 @@ LOAD build\flappy.o
                 0x20000168                        . = ALIGN (0x4)
                 0x20000168                        _ebss = .
 
-.stack          0x20000168      0x800 load address 0x08002738
+.stack          0x20000168      0x800 load address 0x08002744
                 0x20000168                        . = ALIGN (0x8)
  *(.stack)
  .stack         0x20000168      0x800 build\startup.o

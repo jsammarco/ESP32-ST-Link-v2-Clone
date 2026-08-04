@@ -18,11 +18,16 @@ from pathlib import Path
 
 from build_slideshow_with_photos import find_vaporware_sdk, validate_photos
 from launcher_storage import (
+    APP_RAM_SAFE_BYTES,
     APP_SAFE_BYTES,
     BUNDLE_APPS,
+    COIL_OUTPUTS,
     DEFAULT_LAUNCHER_TITLE,
     FLASH_TOTAL_BYTES,
     SETTINGS_RESERVED_BYTES,
+    STACK_RESERVED_BYTES,
+    flashed_image_bytes,
+    projected_launcher_ram_bytes,
     validate_launcher_title,
 )
 
@@ -40,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--apps", nargs="+", required=True, choices=BUNDLE_APPS, metavar="APP")
     parser.add_argument("--photos", type=Path, nargs="*", metavar="PHOTO")
     parser.add_argument("--screen-stream", action="store_true", help="include the SWD screen mirror")
+    parser.add_argument("--coil-output", choices=COIL_OUTPUTS, default="pa5")
     return parser.parse_args()
 
 
@@ -61,11 +67,25 @@ def main() -> int:
     if not BUILD_SCRIPT.is_file():
         raise RuntimeError(f"Build script not found: {BUILD_SCRIPT}")
     sdk = find_vaporware_sdk()
-    output_name = CUSTOM_APP_NAME + ("-stream" if args.screen_stream else "")
+    coil_config = COIL_OUTPUTS[args.coil_output]
+    projected_ram = projected_launcher_ram_bytes(apps, screen_stream=args.screen_stream)
+    if projected_ram > APP_RAM_SAFE_BYTES:
+        raise RuntimeError(
+            f"Launcher bundle needs about {projected_ram:,} bytes of static RAM; "
+            f"limit is {APP_RAM_SAFE_BYTES:,} so {STACK_RESERVED_BYTES:,} bytes remain for the stack. "
+            "Doom and Slideshow are the largest RAM users; remove one of them, "
+            "remove other apps, or disable screen streaming."
+        )
+    output_name = CUSTOM_APP_NAME + coil_config["suffix"] + ("-stream" if args.screen_stream else "")
     custom_image = LAUNCHER_DIR / "build" / f"{output_name}.bin"
 
     print(f"Launcher title: {title}")
     print("Building Launcher bundle: " + " + ".join(apps))
+    print(f"Coil output: {coil_config['label']}")
+    print(
+        f"Projected static RAM: {projected_ram:,} / {APP_RAM_SAFE_BYTES:,} bytes "
+        f"({STACK_RESERVED_BYTES:,}-byte stack reserved)"
+    )
     if photos:
         print(f"Embedding {len(photos)} Slideshow photo(s):")
         for index, photo in enumerate(photos, start=1):
@@ -79,6 +99,7 @@ def main() -> int:
             environment["LAUNCHER_APP_NAME"] = output_name
             environment["LAUNCHER_APPS"] = " ".join(f'"{app}"' for app in apps)
             environment["LAUNCHER_TITLE"] = title
+            environment["RAZ_COIL_OUTPUT"] = coil_config["build_value"]
             if args.screen_stream:
                 environment["SCREEN_STREAMER"] = "1"
             if photos:
@@ -103,7 +124,8 @@ def main() -> int:
 
     if not custom_image.is_file():
         raise RuntimeError(f"Build completed without producing {custom_image}")
-    image_bytes = custom_image.stat().st_size
+    linked_bytes = custom_image.stat().st_size
+    image_bytes = flashed_image_bytes(linked_bytes)
     print(
         f"FLASH_USAGE {image_bytes} {APP_SAFE_BYTES} {FLASH_TOTAL_BYTES} "
         f"(settings reserve {SETTINGS_RESERVED_BYTES} bytes)"
@@ -112,7 +134,10 @@ def main() -> int:
         raise RuntimeError(
             f"Launcher image is {image_bytes:,} bytes; safe app limit is {APP_SAFE_BYTES:,} bytes."
         )
-    print(f"Built {custom_image} ({image_bytes:,} bytes).")
+    print(
+        f"Built {custom_image} ({linked_bytes:,} linked bytes; "
+        f"{image_bytes:,} word-aligned flash bytes)."
+    )
     return 0
 
 
