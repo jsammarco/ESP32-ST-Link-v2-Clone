@@ -31,8 +31,12 @@ The output directory is ignored by Git; it is safe to regenerate or delete.
 
 ## Charging findings
 
-The factory images contain no verified MCU charge-control loop and no verified
-PB1/PB2 charge-status read:
+The factory images contain no verified MCU charge-control loop or charge-status
+read:
+
+- Both images configure PB1 and PB2 as ordinary GPIO inputs during startup;
+  they are never configured as outputs or written by the factory GPIO set/reset
+  helpers. The final input configuration has no MCU pull resistor enabled.
 
 - Factory input helper `0x08002EE4` reads `GPIOx + 0x10` (the GPIO input-data
   register).

@@ -257,9 +257,11 @@ void handle_runtime_command(const char *line) {
     return;
   }
   if (strcmp(line, "SCAN") == 0) {
-    if (!raz_browser_start_scan()) {
+    if (raz_browser_scan_active()) {
+      write_line("SCAN,STARTED");
+    } else if (!raz_browser_start_scan()) {
       send_scoped_error("SCAN",
-                        raz_browser_scan_active() ? "SCAN BUSY" : "SCAN START FAILED");
+                        "SCAN START FAILED");
     }
   } else if (strcmp(line, "WIFI?") == 0) {
     raz_browser_send_wifi_status();

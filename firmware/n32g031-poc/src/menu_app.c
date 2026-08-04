@@ -48,6 +48,7 @@ static uint16_t g_seen_revision;
 static bool g_last_online;
 static protocol_wifi_state_t g_last_wifi_state;
 static bool g_scan_for_connect;
+static bool g_pressure_active;
 
 static void show_status(void)
 {
@@ -64,7 +65,7 @@ static void show_network(void)
         return;
     }
     if (g_network_index >= count) g_network_index = 0u;
-    display_ui_network(protocol_ap_at(g_network_index), g_network_index, count);
+    display_ui_networks(g_network_index);
 }
 
 static void go_to_menu(void)
@@ -270,6 +271,7 @@ void menu_app_init(void)
     g_last_online = false;
     g_last_wifi_state = PROTOCOL_WIFI_DISCONNECTED;
     g_scan_for_connect = false;
+    g_pressure_active = false;
     display_ui_menu(g_menu_item);
     protocol_send_ping();
 }
@@ -278,6 +280,9 @@ void menu_app_poll(void)
 {
     const uint16_t now = ms_now();
     const button_event_t event = button_gestures_poll();
+    const bool pressure_active = hardware_pressure_sensor_is_active();
+    const bool pressure_started = pressure_active && !g_pressure_active;
+    g_pressure_active = pressure_active;
 
     protocol_poll();
     protocol_check_timeouts();
@@ -353,7 +358,10 @@ void menu_app_poll(void)
     }
 
     if (g_screen == SCREEN_KEYBOARD) {
-        if (event == BUTTON_EVENT_SHORT) {
+        if (pressure_started) {
+            text_keyboard_toggle_shift();
+            display_ui_keyboard();
+        } else if (event == BUTTON_EVENT_SHORT) {
             text_keyboard_next();
             display_ui_keyboard();
         } else if (event == BUTTON_EVENT_DOUBLE) {

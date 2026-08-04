@@ -6,6 +6,7 @@
 
 #define UI_BG       COL_RGB(7, 10, 18)
 #define UI_PANEL    COL_RGB(20, 28, 45)
+#define UI_EDGE     COL_RGB(45, 61, 84)
 #define UI_SELECT   COL_RGB(26, 112, 138)
 #define UI_TEXT     COL_RGB(235, 242, 250)
 #define UI_MUTED    COL_RGB(135, 153, 175)
@@ -21,6 +22,9 @@ static uint8_t g_sites_cached_selected;
 static bool g_scan_cache_valid;
 static uint8_t g_scan_cached_active;
 static uint8_t g_scan_cached_acknowledged;
+static bool g_networks_cache_valid;
+static uint8_t g_networks_cached_first;
+static uint8_t g_networks_cached_selected;
 static bool g_keyboard_cache_valid;
 static uint8_t g_keyboard_cached_page;
 static uint8_t g_keyboard_cached_key;
@@ -112,10 +116,24 @@ static void draw_header(const char *title)
     g_menu_cache_valid = false;
     g_sites_cache_valid = false;
     g_scan_cache_valid = false;
+    g_networks_cache_valid = false;
     g_keyboard_cache_valid = false;
     display_fill(UI_BG);
-    display_fill_rect(0u, 0u, LCD_WIDTH, 20u, UI_PANEL);
-    draw_text(6u, 5u, title, UI_ACCENT, 2u, 15u);
+    display_fill_rect(0u, 0u, LCD_WIDTH, 18u, UI_PANEL);
+    display_fill_rect(0u, 17u, LCD_WIDTH, 1u, UI_EDGE);
+    draw_text(6u, 6u, title, UI_ACCENT, 1u, 29u);
+}
+
+static void draw_card(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                      bool selected)
+{
+    display_fill_rect(x, y, width, height, selected ? UI_SELECT : UI_PANEL);
+    display_fill_rect(x, y, width, 1u, selected ? UI_ACCENT : UI_EDGE);
+    display_fill_rect(x, (uint16_t)(y + height - 1u), width, 1u,
+                      selected ? UI_ACCENT : UI_EDGE);
+    display_fill_rect(x, y, 1u, height, selected ? UI_ACCENT : UI_EDGE);
+    display_fill_rect((uint16_t)(x + width - 1u), y, 1u, height,
+                      selected ? UI_ACCENT : UI_EDGE);
 }
 
 static void draw_menu_row(uint8_t first, uint8_t row, uint8_t selected)
@@ -125,11 +143,12 @@ static void draw_menu_row(uint8_t first, uint8_t row, uint8_t selected)
         "BROWSER", "RESCAN", "DISCONNECT", "SWD RECOVERY", "ABOUT"
     };
     const uint8_t item = (uint8_t)(first + row);
-    const uint16_t y = (uint16_t)(27u + (uint16_t)row * 25u);
+    const uint16_t y = (uint16_t)(25u + (uint16_t)row * 24u);
     const bool active = item == selected;
-    display_fill_rect(4u, y, 120u, 20u, active ? UI_SELECT : UI_PANEL);
-    draw_text(10u, (uint16_t)(y + 5u), items[item],
-              active ? UI_TEXT : UI_MUTED, 2u, 14u);
+    draw_card(4u, y, 120u, 21u, active);
+    if (active) display_fill_rect(7u, (uint16_t)(y + 5u), 2u, 11u, UI_TEXT);
+    draw_text(active ? 14u : 11u, (uint16_t)(y + 8u), items[item],
+              active ? UI_TEXT : UI_MUTED, 1u, 27u);
 }
 
 static void format_u8(uint8_t value, char *out)
@@ -189,21 +208,23 @@ void display_ui_menu(uint8_t selected)
     const uint8_t first = selected < 5u ? 0u : 4u;
     uint8_t index;
 
-    if (g_menu_cache_valid && (first == g_menu_cached_first)) {
-        if (selected != g_menu_cached_selected) {
-            draw_menu_row(first,
-                          (uint8_t)(g_menu_cached_selected - first), selected);
-            draw_menu_row(first, (uint8_t)(selected - first), selected);
-            g_menu_cached_selected = selected;
-        }
-        return;
+    if (!g_menu_cache_valid) {
+        draw_header("RAZ BROWSER");
+        draw_text(6u, 20u, "TAP TO MOVE", UI_MUTED, 1u, 14u);
+        draw_text(73u, 20u, "HOLD TO OPEN", UI_MUTED, 1u, 16u);
+        draw_text(6u, 153u, "DOUBLE PRESS: BACK", UI_MUTED, 1u, 22u);
     }
 
-    draw_header("RAZ LINK");
-    for (index = 0u; index < 5u; index++) {
-        draw_menu_row(first, index, selected);
+    if (!g_menu_cache_valid || (first != g_menu_cached_first)) {
+        for (index = 0u; index < 5u; index++) {
+            draw_menu_row(first, index, selected);
+        }
+    } else if (selected != g_menu_cached_selected) {
+        draw_menu_row(first,
+                      (uint8_t)(g_menu_cached_selected - first), selected);
+        draw_menu_row(first, (uint8_t)(selected - first), selected);
     }
-    draw_text(6u, 153u, "TAP NEXT  HOLD 1.5S SELECT", UI_MUTED, 1u, 29u);
+
     g_menu_cached_first = first;
     g_menu_cached_selected = selected;
     g_menu_cache_valid = true;
@@ -262,28 +283,71 @@ void display_ui_scan(uint8_t active, uint8_t acknowledged, const char *error)
     g_scan_cache_valid = true;
 }
 
-void display_ui_network(const protocol_ap_t *ap, uint8_t index, uint8_t count)
+static uint8_t network_first_visible(uint8_t selected, uint8_t count)
+{
+    const uint8_t visible_rows = 5u;
+    if (count <= visible_rows) return 0u;
+    if (selected < 2u) return 0u;
+    if (selected >= (uint8_t)(count - 2u)) {
+        return (uint8_t)(count - visible_rows);
+    }
+    return (uint8_t)(selected - 2u);
+}
+
+static void draw_network_row(uint8_t network_index, uint8_t selected)
+{
+    const protocol_ap_t *ap = protocol_ap_at(network_index);
+    char rssi[6];
+    const uint8_t row = (uint8_t)(network_index - g_networks_cached_first);
+    const uint16_t y = (uint16_t)(34u + (uint16_t)row * 22u);
+    const bool active = network_index == selected;
+
+    if (ap == (const protocol_ap_t *)0) return;
+    draw_card(4u, y, 120u, 20u, active);
+    if (active) display_fill_rect(7u, (uint16_t)(y + 4u), 2u, 12u, UI_TEXT);
+    draw_text(active ? 13u : 10u, (uint16_t)(y + 3u),
+              ap->ssid[0] != '\0' ? ap->ssid : "HIDDEN",
+              active ? UI_TEXT : UI_MUTED, active ? 2u : 1u,
+              active ? 13u : 25u);
+    format_i16(ap->rssi, rssi);
+    draw_text(active ? 13u : 10u, (uint16_t)(y + 14u),
+              ap->is_open ? "OPEN" : "SECURE", ap->is_open ? UI_GOOD : UI_ACCENT,
+              1u, 6u);
+    draw_text(80u, (uint16_t)(y + 14u), rssi, UI_MUTED, 1u, 5u);
+    draw_text(103u, (uint16_t)(y + 14u), "DBM", UI_MUTED, 1u, 3u);
+}
+
+void display_ui_networks(uint8_t selected)
 {
     char number[4];
-    char rssi[6];
+    const uint8_t count = protocol_ap_count();
+    const uint8_t first = network_first_visible(selected, count);
+    uint8_t index;
 
-    draw_header("NETWORK");
-    format_u8((uint8_t)(index + 1u), number);
-    draw_text(8u, 29u, number, UI_ACCENT, 2u, 3u);
-    draw_text(32u, 29u, "/", UI_MUTED, 2u, 1u);
-    format_u8(count, number);
-    draw_text(48u, 29u, number, UI_ACCENT, 2u, 3u);
+    if (!g_networks_cache_valid) {
+        draw_header("WI-FI NETWORKS");
+        draw_text(6u, 22u, "NETWORK", UI_MUTED, 1u, 7u);
+        format_u8((uint8_t)(selected + 1u), number);
+        draw_text(40u, 22u, number, UI_ACCENT, 1u, 3u);
+        draw_text(52u, 22u, "/", UI_MUTED, 1u, 1u);
+        format_u8(count, number);
+        draw_text(60u, 22u, number, UI_ACCENT, 1u, 3u);
+        draw_text(6u, 153u, "HOLD: CONNECT  DOUBLE: BACK", UI_MUTED, 1u, 29u);
+    }
 
-    display_fill_rect(4u, 55u, 120u, 24u, UI_PANEL);
-    draw_text(7u, 64u, ap->ssid[0] != '\0' ? ap->ssid : "HIDDEN",
-              UI_TEXT, 1u, 29u);
+    if (!g_networks_cache_valid || (first != g_networks_cached_first)) {
+        g_networks_cached_first = first;
+        for (index = first;
+             (index < count) && (index < (uint8_t)(first + 5u)); index++) {
+            draw_network_row(index, selected);
+        }
+    } else if (selected != g_networks_cached_selected) {
+        draw_network_row(g_networks_cached_selected, selected);
+        draw_network_row(selected, selected);
+    }
 
-    draw_text(8u, 96u, "RSSI", UI_MUTED, 2u, 4u);
-    format_i16(ap->rssi, rssi);
-    draw_text(48u, 96u, rssi, UI_TEXT, 2u, 5u);
-    draw_text(8u, 121u, ap->is_open ? "OPEN" : "SECURE",
-              ap->is_open ? UI_GOOD : UI_ACCENT, 2u, 8u);
-    draw_text(7u, 148u, "TAP NEXT HOLD CONNECT DBL BACK", UI_MUTED, 1u, 29u);
+    g_networks_cached_selected = selected;
+    g_networks_cache_valid = true;
 }
 
 void display_ui_no_networks(const char *error)
@@ -359,23 +423,24 @@ static void draw_keyboard_preview(void)
     uint8_t index;
 
     for (index = 0u; index < (uint8_t)(length - start); index++) {
-        preview[index] = text_keyboard_masked() ? '*' : value[start + index];
+        preview[index] = value[start + index];
     }
     preview[index] = '\0';
-    display_fill_rect(3u, 23u, 122u, 18u, UI_PANEL);
+    draw_card(3u, 23u, 122u, 18u, false);
     draw_text(6u, 29u, preview, UI_TEXT, 1u, 29u);
 }
 
 static void draw_keyboard_key(uint8_t index, bool selected)
 {
     char key[3];
-    const uint8_t column = (uint8_t)(index % 6u);
-    const uint8_t row = (uint8_t)(index / 6u);
-    const uint16_t x = (uint16_t)(3u + (uint16_t)column * 21u);
-    const uint16_t y = (uint16_t)(57u + (uint16_t)row * 14u);
+    const uint8_t column = (uint8_t)(index % 7u);
+    const uint8_t row = (uint8_t)(index / 7u);
+    const uint16_t x = (uint16_t)(2u + (uint16_t)column * 18u);
+    const uint16_t y = (uint16_t)(57u + (uint16_t)row * 13u);
     text_keyboard_key_text(index, key);
-    display_fill_rect(x, y, 19u, 12u, selected ? UI_SELECT : UI_PANEL);
-    draw_text((uint16_t)(x + 5u), (uint16_t)(y + 3u), key,
+    draw_card(x, y, 16u, 11u, selected);
+    draw_text((uint16_t)(x + (key[1] == '\0' ? 6u : 3u)),
+              (uint16_t)(y + 3u), key,
               selected ? UI_TEXT : UI_MUTED, 1u, 2u);
 }
 
@@ -403,21 +468,21 @@ void display_ui_keyboard(void)
     draw_header(text_keyboard_label());
     draw_keyboard_preview();
     if (text_keyboard_page() == 0u) {
-        page[0] = 'U'; page[1] = 'P'; page[2] = '\0';
-    } else if (text_keyboard_page() == 1u) {
         page[0] = 'L'; page[1] = 'O'; page[2] = 'W'; page[3] = '\0';
+    } else if (text_keyboard_page() == 1u) {
+        page[0] = 'U'; page[1] = 'P'; page[2] = 'P'; page[3] = '\0';
     } else if (text_keyboard_page() == 2u) {
-        page[0] = 'S'; page[1] = '1'; page[2] = '\0';
+        page[0] = 'S'; page[1] = 'Y'; page[2] = 'M'; page[3] = '1'; page[4] = '\0';
     } else {
-        page[0] = 'S'; page[1] = '2'; page[2] = '\0';
+        page[0] = 'S'; page[1] = 'Y'; page[2] = 'M'; page[3] = '2'; page[4] = '\0';
     }
     draw_text(4u, 46u, page, UI_ACCENT, 1u, 4u);
-    draw_text(25u, 46u, "TAP MOVE DOUBLE TYPE", UI_MUTED, 1u, 24u);
+    draw_text(29u, 46u, "PUFF: SHIFT", UI_MUTED, 1u, 11u);
 
     for (index = 0u; index < text_keyboard_key_count(); index++) {
         draw_keyboard_key(index, index == current_key);
     }
-    draw_text(5u, 148u, "HOLD 1.5S DONE PG SP BK OK X", UI_MUTED, 1u, 29u);
+    draw_text(5u, 148u, "TAP MOVE DBL SELECT HOLD DONE", UI_MUTED, 1u, 29u);
     g_keyboard_cached_page = current_page;
     g_keyboard_cached_key = current_key;
     g_keyboard_cached_length = current_length;

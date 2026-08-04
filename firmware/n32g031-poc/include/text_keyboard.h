@@ -15,6 +15,7 @@ typedef enum {
 void text_keyboard_begin(const char *label, uint8_t max_length,
                          bool masked, bool allow_space, const char *initial);
 void text_keyboard_next(void);
+void text_keyboard_toggle_shift(void);
 text_keyboard_result_t text_keyboard_select(void);
 void text_keyboard_clear(void);
 

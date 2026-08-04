@@ -4,7 +4,9 @@
 #include <stdint.h>
 
 #define LETTER_KEYS 26u
-#define SPECIAL_KEYS 5u
+#define NUMBER_KEYS 10u
+#define ALPHANUMERIC_KEYS (LETTER_KEYS + NUMBER_KEYS)
+#define SPECIAL_KEYS 6u
 
 static const char g_symbols_1[] = "0123456789.-_:/?&=%+@!#";
 static const char g_symbols_2[] = "$*()[],;'\"\\<>^`{}|~";
@@ -26,7 +28,7 @@ static uint8_t symbol_count(void)
 
 static uint8_t base_key_count(void)
 {
-    return (g_page >= 2u) ? symbol_count() : LETTER_KEYS;
+    return (g_page >= 2u) ? symbol_count() : ALPHANUMERIC_KEYS;
 }
 
 static void copy_bounded(char *destination, uint8_t capacity, const char *source)
@@ -54,7 +56,7 @@ void text_keyboard_begin(const char *label, uint8_t max_length,
     while (g_value[g_length] != '\0') {
         g_length++;
     }
-    g_page = (uint8_t)(masked ? 0u : 1u);
+    g_page = 0u;
     g_key_index = 0u;
     g_masked = masked;
     g_allow_space = allow_space;
@@ -68,6 +70,12 @@ void text_keyboard_next(void)
     }
 }
 
+void text_keyboard_toggle_shift(void)
+{
+    g_page = (uint8_t)(g_page == 1u ? 0u : 1u);
+    g_key_index = 0u;
+}
+
 text_keyboard_result_t text_keyboard_select(void)
 {
     const uint8_t base_count = base_key_count();
@@ -77,10 +85,11 @@ text_keyboard_result_t text_keyboard_select(void)
             if (g_page >= 2u) {
                 value = (g_page == 2u) ? g_symbols_1[g_key_index] :
                                          g_symbols_2[g_key_index];
-            } else if (g_page == 1u) {
-                value = (char)('a' + g_key_index);
+            } else if (g_key_index < LETTER_KEYS) {
+                value = g_page == 0u ? (char)('a' + g_key_index) :
+                                       (char)('A' + g_key_index);
             } else {
-                value = (char)('A' + g_key_index);
+                value = (char)('0' + (g_key_index - LETTER_KEYS));
             }
             g_value[g_length++] = value;
             g_value[g_length] = '\0';
@@ -89,24 +98,27 @@ text_keyboard_result_t text_keyboard_select(void)
     }
 
     switch ((uint8_t)(g_key_index - base_count)) {
-    case 0u: /* Page */
-        g_page = (uint8_t)((g_page + 1u) % 4u);
+    case 0u:
+        text_keyboard_toggle_shift();
+        break;
+    case 1u:
+        g_page = (g_page == 2u) ? 3u : 2u;
         g_key_index = 0u;
         break;
-    case 1u: /* Space */
+    case 2u:
         if (g_allow_space && (g_length < g_max_length)) {
             g_value[g_length++] = ' ';
             g_value[g_length] = '\0';
         }
         break;
-    case 2u: /* Backspace */
+    case 3u:
         if (g_length != 0u) {
             g_value[--g_length] = '\0';
         }
         break;
-    case 3u: /* Done */
+    case 4u:
         return TEXT_KEYBOARD_DONE;
-    default: /* Cancel */
+    default:
         return TEXT_KEYBOARD_CANCELLED;
     }
     return TEXT_KEYBOARD_CHANGED;
@@ -166,18 +178,20 @@ void text_keyboard_key_text(uint8_t index, char output[3])
     if (index < base_count) {
         if (g_page >= 2u) {
             output[0] = (g_page == 2u) ? g_symbols_1[index] : g_symbols_2[index];
-        } else if (g_page == 1u) {
-            output[0] = (char)('a' + index);
+        } else if (index < LETTER_KEYS) {
+            output[0] = g_page == 0u ? (char)('a' + index) :
+                                       (char)('A' + index);
         } else {
-            output[0] = (char)('A' + index);
+            output[0] = (char)('0' + (index - LETTER_KEYS));
         }
         return;
     }
     switch ((uint8_t)(index - base_count)) {
-    case 0u: output[0] = 'P'; output[1] = 'G'; break;
-    case 1u: output[0] = 'S'; output[1] = 'P'; break;
-    case 2u: output[0] = 'B'; output[1] = 'K'; break;
-    case 3u: output[0] = 'O'; output[1] = 'K'; break;
+    case 0u: output[0] = 'S'; output[1] = 'H'; break;
+    case 1u: output[0] = 'S'; output[1] = 'Y'; break;
+    case 2u: output[0] = 'S'; output[1] = 'P'; break;
+    case 3u: output[0] = 'B'; output[1] = 'K'; break;
+    case 4u: output[0] = 'O'; output[1] = 'K'; break;
     default: output[0] = 'X'; break;
     }
 }

@@ -21,12 +21,23 @@ int main(void)
 {
     char key[3];
     text_keyboard_begin("URL", 20u, false, false, "https://");
-    CHECK(text_keyboard_page() == 1u);
+    CHECK(text_keyboard_page() == 0u);
     CHECK(strcmp(text_keyboard_value(), "https://") == 0);
     CHECK(text_keyboard_select() == TEXT_KEYBOARD_CHANGED);
     CHECK(strcmp(text_keyboard_value(), "https://a") == 0);
 
     move_to(26u);
+    text_keyboard_key_text(26u, key);
+    CHECK(strcmp(key, "0") == 0);
+    move_to(36u);
+    CHECK(text_keyboard_select() == TEXT_KEYBOARD_CHANGED);
+    CHECK(text_keyboard_page() == 1u);
+    text_keyboard_key_text(0u, key);
+    CHECK(strcmp(key, "A") == 0);
+
+    text_keyboard_toggle_shift();
+    CHECK(text_keyboard_page() == 0u);
+    move_to(37u);
     CHECK(text_keyboard_select() == TEXT_KEYBOARD_CHANGED);
     CHECK(text_keyboard_page() == 2u);
     text_keyboard_key_text(10u, key);

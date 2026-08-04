@@ -11,7 +11,7 @@ void display_ui_menu(uint8_t selected);
 void display_ui_status(uint8_t online, protocol_wifi_state_t wifi_state,
                        const char *ssid, const char *ip);
 void display_ui_scan(uint8_t active, uint8_t acknowledged, const char *error);
-void display_ui_network(const protocol_ap_t *ap, uint8_t index, uint8_t count);
+void display_ui_networks(uint8_t selected);
 void display_ui_no_networks(const char *error);
 void display_ui_wifi_progress(protocol_wifi_state_t state, const char *ssid,
                               const char *error);

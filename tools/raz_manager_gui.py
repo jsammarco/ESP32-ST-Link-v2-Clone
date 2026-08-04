@@ -136,6 +136,7 @@ class RazManager(tk.Tk):
         self.title("RAZ ESP32 Manager")
         self.minsize(780, 1020)
         self.geometry("880x1220")
+        self.state("zoomed")
         self.option_add("*tearOff", False)
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()

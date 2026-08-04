@@ -8,9 +8,10 @@
 
 #define RX_LINE_BYTES          128u
 #define ERROR_BYTES             40u
-#define ONLINE_TIMEOUT_MS     5000u
-#define SCAN_ACK_TIMEOUT_MS   5000u
-#define SCAN_TIMEOUT_MS      15000u
+#define ONLINE_TIMEOUT_MS    12000u
+#define SCAN_ACK_RETRY_MS      800u
+#define SCAN_ACK_TIMEOUT_MS  10000u
+#define SCAN_TIMEOUT_MS      30000u
 #define WIFI_TIMEOUT_MS      25000u
 #define BROWSER_TIMEOUT_MS   30000u
 #define SWD_RECOVERY_TIMEOUT_MS 3000u
@@ -37,6 +38,7 @@ static uint8_t g_view_received;
 static uint8_t g_view_count;
 static uint16_t g_last_pong_ms;
 static uint16_t g_operation_started_ms;
+static uint16_t g_last_scan_request_ms;
 static uint16_t g_revision;
 static uint16_t g_view_top;
 static uint16_t g_document_lines;
@@ -530,6 +532,7 @@ void protocol_init(void)
     g_view_count = 0u;
     g_last_pong_ms = ms_now();
     g_operation_started_ms = ms_now();
+    g_last_scan_request_ms = ms_now();
     g_revision = 1u;
     g_view_top = 0u;
     g_document_lines = 0u;
@@ -573,14 +576,19 @@ void protocol_send_ping(void)
 
 void protocol_check_timeouts(void)
 {
-    const uint16_t elapsed = (uint16_t)(ms_now() - g_operation_started_ms);
+    const uint16_t now = ms_now();
+    const uint16_t elapsed = (uint16_t)(now - g_operation_started_ms);
     if (g_swd_recovery_waiting && (elapsed >= SWD_RECOVERY_TIMEOUT_MS)) {
         g_swd_recovery_waiting = false;
         set_error("ESP32 NO ACK");
         bump_revision();
-    } else if (g_scan_active && !g_scan_acknowledged &&
-        (elapsed >= SCAN_ACK_TIMEOUT_MS)) {
-        fail_scan("NO ESP32 SCAN REPLY");
+    } else if (g_scan_active && !g_scan_acknowledged) {
+        if (elapsed >= SCAN_ACK_TIMEOUT_MS) {
+            fail_scan("NO ESP32 SCAN REPLY");
+        } else if ((uint16_t)(now - g_last_scan_request_ms) >= SCAN_ACK_RETRY_MS) {
+            runtime_uart_write_line("SCAN");
+            g_last_scan_request_ms = now;
+        }
     } else if (g_scan_active && (elapsed >= SCAN_TIMEOUT_MS)) {
         fail_scan("SCAN DID NOT FINISH");
     }
@@ -602,6 +610,7 @@ bool protocol_request_scan(void)
     g_scan_acknowledged = false;
     g_receiving_aps = false;
     g_operation_started_ms = ms_now();
+    g_last_scan_request_ms = g_operation_started_ms;
     bump_revision();
     runtime_uart_write_line("SCAN");
     return true;

@@ -144,12 +144,16 @@ static void test_status_and_timeouts(void)
     CHECK(!protocol_esp32_online());
     feed("ESP32,READY\nPONG\n");
     CHECK(protocol_esp32_online());
-    g_now = (uint16_t)(g_now + 5001u);
+    g_now = (uint16_t)(g_now + 12001u);
     CHECK(!protocol_esp32_online());
 
     reset_fixture();
     CHECK(protocol_request_scan());
-    g_now = (uint16_t)(g_now + 5000u);
+    g_now = (uint16_t)(g_now + 800u);
+    protocol_check_timeouts();
+    CHECK(protocol_scan_active());
+    CHECK(strcmp(g_tx, "SCAN\nSCAN\n") == 0);
+    g_now = (uint16_t)(g_now + 9200u);
     protocol_check_timeouts();
     CHECK(!protocol_scan_active());
     CHECK(strcmp(protocol_last_error(), "NO ESP32 SCAN REPLY") == 0);
@@ -159,7 +163,7 @@ static void test_status_and_timeouts(void)
     feed("SCAN,STARTED\n");
     CHECK(protocol_scan_active());
     CHECK(protocol_scan_acknowledged());
-    g_now = (uint16_t)(g_now + 15000u);
+    g_now = (uint16_t)(g_now + 30000u);
     protocol_check_timeouts();
     CHECK(!protocol_scan_active());
     CHECK(strcmp(protocol_last_error(), "SCAN DID NOT FINISH") == 0);

@@ -27,8 +27,10 @@ heater-disabled SWD service loop until the next flash/reset.
 - Menus: tap moves, double press goes back, and a 1.5-second hold selects.
 - Network result: tap cycles results and a 1.5-second hold connects.
 - Keyboard: tap moves, double press types/activates a key, and a 1.5-second hold
-  submits. `PG`, `SP`, `BK`, `OK`, and `X` mean page, space, backspace, done,
-  and cancel.
+  submits. Puffing toggles shift; `SH` offers the same fallback control. `SY`,
+  `SP`, `BK`, `OK`, and `X` mean symbols, space, backspace, done, and cancel.
+  The symbol key switches between two special character pages. Password text is
+  shown while entering it.
 - Web page: tap scrolls down one line, double press scrolls up one line, and a
   1.5-second hold returns to the main menu.
 - SWD Recovery: hold once to select, then hold again to confirm. On
